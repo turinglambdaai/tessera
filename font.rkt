@@ -284,7 +284,7 @@
                            [else (s16 d pos)])]
                  [width (cond [short? 1] [same? 0] [else 2])]
                  [signed-dx (if (and short? (not same?)) (- dx-val) dx-val)])
-            (vector-set! xs i x)
+            (vector-set! xs i (+ x signed-dx))
             (walk (add1 i) (+ pos width) (+ x signed-dx))))))
 
   ;; y coordinates continue from where the x walk stopped
@@ -300,7 +300,7 @@
                        [else (s16 d pos)])]
              [width (cond [short? 1] [same? 0] [else 2])]
              [signed-dy (if (and short? (not same?)) (- dy-val) dy-val)])
-        (vector-set! ys i y)
+        (vector-set! ys i (+ y signed-dy))
         (walk (add1 i) (+ pos width) (+ y signed-dy)))))
 
   ;; split into contours by end points
