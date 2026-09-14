@@ -7,6 +7,7 @@
 [English](README.md) · **中文**
 
 <p align="center"><img src="docs/showcase-gallery.png" alt="Tessera gallery — buttons, checkbox, progress, CJK text" width="560"></p>
+<p align="center"><img src="docs/showcase-dashboard.png" alt="Tessera dashboard — cards, progress bars" width="640"></p>
 
 ## 为什么做 Tessera？
 

@@ -23,7 +23,8 @@
          tessera/view
          tessera/layout)
 
-(provide render-view->png)
+(provide render-view->png
+         theme-current)
 
 ;; Render a view tree and write a PNG. #:scale multiplies the internal
 ;; framebuffer (2 = Retina-quality output).
@@ -62,7 +63,10 @@
 
       (renderer-begin-frame! renderer fbw fbh scale)
       (renderer-clear! renderer (theme-bg thm))
-      (define laid (layout-view ctx view width height))
+      ;; views may read theme-current while being built, so a thunk view is
+      ;; evaluated under the requested theme
+      (define view* (if (procedure? view) (view) view))
+      (define laid (layout-view ctx view* width height))
       (draw-laid! renderer laid ctx)
       (renderer-end-frame! renderer)
       (glFinish)

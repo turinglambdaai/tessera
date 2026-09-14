@@ -7,6 +7,7 @@ A GPU-accelerated cross-platform UI toolkit for [Racket](https://racket-lang.org
 **English** · [中文](README.zh-CN.md)
 
 <p align="center"><img src="docs/showcase-gallery.png" alt="Tessera gallery — buttons, checkbox, progress, CJK text" width="560"></p>
+<p align="center"><img src="docs/showcase-dashboard.png" alt="Tessera dashboard — cards, progress bars" width="640"></p>
 
 ## Why Tessera?
 

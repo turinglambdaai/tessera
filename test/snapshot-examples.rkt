@@ -58,11 +58,12 @@
 (render-view->png (build-path out "example-dashboard.png")
                   (dash-view)
                   #:width 640 #:height 360 #:scale 2)
-(render-view->png (build-path out "example-dashboard-dark.png")
-                  (dash-view)
-                  #:width 640 #:height 360
-                  #:theme theme:dark
-                  #:scale 2)
+(parameterize ([theme-current theme:dark])
+  (render-view->png (build-path out "example-dashboard-dark.png")
+                    (λ () (dash-view))
+                    #:width 640 #:height 360
+                    #:theme theme:dark
+                    #:scale 2))
 
 ;; snapshots are real PNGs
 (define png1 (file->bytes (build-path out "example-counter.png")))
