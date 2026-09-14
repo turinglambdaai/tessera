@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Bogdanp/setup-racket@v1.11
+        with:
+          version: 'stable'
+      - name: Install GLFW (macOS)
+        if: runner.os == 'macOS'
+        run: brew install glfw
+      - name: Install GLFW + xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglfw3 xvfb libgl1-mesa-dri libglu1-mesa
+      - name: Install package
+        run: raco pkg install --auto --name tessera --link .
+      - name: Run tests (macOS)
+        if: runner.os == 'macOS'
+        run: raco test test/
+      - name: Run tests (Linux, headless)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a raco test test/
