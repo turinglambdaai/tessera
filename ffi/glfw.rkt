@@ -77,6 +77,10 @@
 (define GLFW_MOUSE_BUTTON_1 0)   ; left
 (define GLFW_MOUSE_BUTTON_2 1)   ; right
 
+(define GLFW_KEY_A          65)
+(define GLFW_KEY_C          67)
+(define GLFW_KEY_V          86)
+(define GLFW_KEY_X          88)
 (define GLFW_KEY_SPACE      32)
 (define GLFW_KEY_ESCAPE     256)
 (define GLFW_KEY_ENTER      257)

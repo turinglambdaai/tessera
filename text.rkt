@@ -388,27 +388,54 @@
 ;; Draw a string with (x, y) at the top-left of the line box, in POINTS.
 ;; Glyph metrics are device px (the font-set rasterizes at px-size device
 ;; pixels), so the origin is converted once and the glyph stream runs in
-;; raw device coordinates.
-(define (draw-text! r fs str x y color)
+;; raw device coordinates. fs may be a (cons primary fallback) pair: chars
+;; missing from the primary face render from the fallback face.
+(define (draw-text! r fs-or-pair str x y color)
+  ;; fs-or-pair: primary font-set, or (cons primary cjk-fallback-or-#f).
+  ;; Missing glyphs render from the fallback face (same pixel size), so a
+  ;; Latin primary + CJK fallback covers mixed-script text.
+  (define primary (if (pair? fs-or-pair) (car fs-or-pair) fs-or-pair))
+  (define fallback (and (pair? fs-or-pair) (cdr fs-or-pair)))
   (unless (string=? str "")
-    (r-use-texture! r (font-set-texture fs))
-    (define f (font-set-font fs))
-    (define s (font-set-px-size fs))
+    (r-use-texture! r (font-set-texture primary))
+    (define f (font-set-font primary))
+    (define s (font-set-px-size primary))
     (define ascent (font-units->px f (font-ascent f) s))
     (define x0 (* 1.0 x (renderer-scale r)))
     (define y0 (* 1.0 y (renderer-scale r)))
     (let draw ([chars (string->list str)] [prev-gid #f] [cx 0.0])
       (unless (null? chars)
-        (define gid ((font-cmap-lookup f) (car chars)))
+        (define ch (car chars))
+        (define gid ((font-cmap-lookup f) ch))
         (define kern (if prev-gid (font-units->px f (glyph-kern f prev-gid gid) s) 0))
-        (define cell* (glyph-cell fs (car chars)))
-        (when (> (cell-w cell*) 0)
-          (r-quad-uv-raw! r
-                          (+ x0 cx kern (cell-bearing-x cell*))
-                          (+ y0 ascent (cell-bearing-y cell*))
-                          (cell-w cell*) (cell-h cell*)
-                          (cell-u0 cell*) (cell-v0 cell*)
-                          (cell-u1 cell*) (cell-v1 cell*)
-                          color))
-        (define adv (font-units->px f (glyph-advance f gid) s))
-        (draw (cdr chars) gid (+ cx kern adv))))))
+        (cond
+          [(and (zero? gid) fallback)
+           ;; render from the fallback face
+           (define fb-cell (glyph-cell fallback ch))
+           (when (> (cell-w fb-cell) 0)
+             (r-use-texture! r (font-set-texture fallback))
+             (r-quad-uv-raw! r
+                             (+ x0 cx kern (cell-bearing-x fb-cell))
+                             (+ y0 ascent (cell-bearing-y fb-cell))
+                             (cell-w fb-cell) (cell-h fb-cell)
+                             (cell-u0 fb-cell) (cell-v0 fb-cell)
+                             (cell-u1 fb-cell) (cell-v1 fb-cell)
+                             color))
+           (define fadv (font-units->px (font-set-font fallback)
+                                        (glyph-advance (font-set-font fallback)
+                                                       ((font-cmap-lookup (font-set-font fallback)) ch))
+                                        s))
+           (draw (cdr chars) gid (+ cx kern fadv))]
+          [else
+           (define cell* (glyph-cell primary ch))
+           (when (> (cell-w cell*) 0)
+             (r-use-texture! r (font-set-texture primary))
+             (r-quad-uv-raw! r
+                             (+ x0 cx kern (cell-bearing-x cell*))
+                             (+ y0 ascent (cell-bearing-y cell*))
+                             (cell-w cell*) (cell-h cell*)
+                             (cell-u0 cell*) (cell-v0 cell*)
+                             (cell-u1 cell*) (cell-v1 cell*)
+                             color))
+           (define adv (font-units->px f (glyph-advance f gid) s))
+           (draw (cdr chars) gid (+ cx kern adv))])))))
