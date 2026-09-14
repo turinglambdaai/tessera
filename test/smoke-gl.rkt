@@ -6,16 +6,13 @@
 
 (require rackunit
          ffi/unsafe
-         "../tessera/platform.rkt"
-         "../tessera/ffi/gl.rkt")
+         tessera/platform
+         tessera/ffi/gl)
 
 (define pw (open-platform-window! #:width 320 #:height 200
                                   #:title "tessera-smoke-gl"
                                   #:visible? #f))
-(check-equal? (platform-window-kind pw)
-              (case (system-type 'os)
-                [(macosx) 'cgl]
-                [else 'glfw-gl]))
+(check-true (platform-window? pw))
 
 (pw-make-current! pw)
 (define-values (fbw fbh) (pw-framebuffer-size pw))

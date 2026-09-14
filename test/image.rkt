@@ -4,7 +4,7 @@
 
 (require rackunit
          racket/file
-         "../tessera/image.rkt")
+         tessera/image)
 
 ;; ---- QOI round-trip ----------------------------------------------------------
 

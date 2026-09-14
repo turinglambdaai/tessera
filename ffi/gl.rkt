@@ -61,6 +61,10 @@
 (defgl glClear             (_fun _uint -> _void))
 (defgl glReadPixels        (_fun _int _int _int _int _uint _uint _pointer -> _void))
 (defgl glFinish            (_fun -> _void))
+(defgl glOrtho             (_fun _double _double _double _double _double _double -> _void))
+(defgl glMatrixMode        (_fun _uint -> _void))
+(defgl glLoadIdentity      (_fun -> _void))
+(defgl glTexEnvi           (_fun _uint _uint _int -> _void))
 
 (defgl glEnable            (_fun _uint -> _void))
 (defgl glDisable           (_fun _uint -> _void))
@@ -87,18 +91,20 @@
 (defgl glUniform2f         (_fun _int _float _float -> _void))
 (defgl glUniform1i         (_fun _int _int -> _void))
 
-;; buffers / arrays
-(defgl glGenVertexArrays   (_fun _int _pointer -> _void))
-(defgl glBindVertexArray   (_fun _uint -> _void))
-(defgl glGenBuffers        (_fun _int _pointer -> _void))
-(defgl glBindBuffer        (_fun _uint _uint -> _void))
-(defgl glBufferData        (_fun _uint _long _pointer _uint -> _void))
-(defgl glBufferSubData     (_fun _uint _long _long _pointer -> _void))
+;; client-side vertex arrays (legacy pipeline — works on every driver)
+(defgl glVertexPointer     (_fun _int _uint _int _pointer -> _void))
+(defgl glTexCoordPointer   (_fun _int _uint _int _pointer -> _void))
+(defgl glColorPointer      (_fun _int _uint _int _pointer -> _void))
+(defgl glEnableClientState (_fun _uint -> _void))
+(defgl glDisableClientState (_fun _uint -> _void))
+(defgl glBindAttribLocation (_fun _uint _uint _string/utf-8 -> _void))
 (defgl glEnableVertexAttribArray (_fun _uint -> _void))
-(defgl glVertexAttribPointer (_fun _uint _int _uint _uint _int _intptr -> _void))
+(defgl glDisableVertexAttribArray (_fun _uint -> _void))
+(defgl glVertexAttribPointer (_fun _uint _int _uint _uint _int _pointer -> _void))
 
 ;; draw
-(defgl glDrawElements      (_fun _uint _int _uint _intptr -> _void))
+(defgl glDrawArrays       (_fun _uint _int _int -> _void))
+(defgl glDrawElements      (_fun _uint _int _uint _pointer -> _void))
 
 ;; textures
 (defgl glGenTextures       (_fun _int _pointer -> _void))
@@ -108,6 +114,7 @@
 (defgl glTexSubImage2D     (_fun _uint _int _int _int _int _int _uint _uint _pointer -> _void))
 (defgl glTexParameteri     (_fun _uint _uint _int -> _void))
 (defgl glActiveTexture     (_fun _uint -> _void))
+(defgl glClientActiveTexture (_fun _uint -> _void))
 
 ;; ---- constants (values from gl3.h) ------------------------------------------
 
@@ -133,12 +140,15 @@
 (define GL_RGBA  #x1908)
 (define GL_RGB   #x1907)
 (define GL_RED   #x1903)
+(define GL_LUMINANCE #x1909)
 (define GL_RGBA8 #x8058)
 (define GL_R8    #x8229)
 (define GL_TEXTURE_2D #x0DE1)
 (define GL_TEXTURE0 #x84C0)
+(define GL_TEXTURE1 #x84C1)
+(define GL_TEXTURE2 #x84C2)
 (define GL_TEXTURE_MIN_FILTER #x2801)
-(define GL_TEXTURE_MAG_FILTER #x2601)
+(define GL_TEXTURE_MAG_FILTER #x2800)
 (define GL_LINEAR #x2601)
 (define GL_NEAREST #x2600)
 (define GL_CLAMP_TO_EDGE #x812F)
@@ -152,6 +162,10 @@
 (define GL_DYNAMIC_DRAW #x88E8)
 (define GL_STREAM_DRAW #x88E0)
 
+(define GL_VERTEX_ARRAY #x8074)
+(define GL_COLOR_ARRAY #x8076)
+(define GL_TEXTURE_COORD_ARRAY #x8078)
+
 (define GL_VERTEX_SHADER #x8B31)
 (define GL_FRAGMENT_SHADER #x8B20)
 (define GL_COMPILE_STATUS #x8B81)
@@ -160,6 +174,13 @@
 (define GL_FALSE 0)
 
 (define GL_TRIANGLES #x0004)
+(define GL_MULTISAMPLE #x809D)
+(define GL_PROJECTION #x1701)
+(define GL_MODELVIEW #x1700)
+(define GL_TEXTURE_ENV #x2300)
+(define GL_TEXTURE_ENV_MODE #x2200)
+(define GL_MODULATE #x2100)
+(define GL_ALPHA #x1906)
 (define GL_UNSIGNED_SHORT #x1403)
 (define GL_UNSIGNED_INT #x1405)
 

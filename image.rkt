@@ -134,7 +134,7 @@
        (u32be! z pos (adler32 raw))]
       [else
        (define len (min 65535 (- n off)))
-       (define final? (<= (+ off len) n))
+       (define final? (>= (+ off len) n))
        (bytes-set! z pos (if final? 1 0))
        (bytes-set! z (+ pos 1) (bitwise-and #xFF len))
        (bytes-set! z (+ pos 2) (bitwise-and #xFF (arithmetic-shift len -8)))

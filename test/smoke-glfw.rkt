@@ -4,7 +4,7 @@
 ;; and tears down cleanly. Run with: raco test test/smoke-glfw.rkt
 
 (require rackunit
-         "../tessera/ffi/glfw.rkt")
+         tessera/ffi/glfw)
 
 (check-equal? (glfwInit) GLFW_TRUE "glfwInit should succeed")
 (define version (glfwGetVersionString))

@@ -54,6 +54,7 @@
 (define GLFW_RESIZABLE          #x00020003)
 (define GLFW_VISIBLE            #x00020004)
 (define GLFW_TRANSPARENT_FRAMEBUFFER #x0002000A)
+(define GLFW_SAMPLES #x0002100D)
 
 (define GLFW_CLIENT_API         #x00022001)
 (define GLFW_NO_API             0)

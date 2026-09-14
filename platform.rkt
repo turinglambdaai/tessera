@@ -1,34 +1,24 @@
 #lang racket/base
 
 ;; tessera's platform layer: window creation, GL context lifecycle, event
-;; pump, clipboard, and cursors — one API for every supported OS.
+;; pump, clipboard, and cursors — one API for every supported OS, via GLFW.
 ;;
-;; Two context backends, chosen by OS:
+;; Context policy: a LEGACY-PROFILE OpenGL 2.1 context everywhere. tessera's
+;; renderer needs nothing newer (batched quads, client vertex arrays, GLSL
+;; 120), and legacy compatibility is the one pipeline every driver ships —
+;; including macOS 26, whose core-profile path is broken in practice (VAO
+;; entry points reject calls, draws fail with GL_INVALID_OPERATION, while
+;; the same calls succeed on a 2.1 context). Fewer branches, same pixels.
 ;;
-;;   macOS  GLFW opens a NO_API window (windowing only); the OpenGL core
-;;          context is created with CGL and attached to the window's content
-;;          view through the Objective-C runtime. GLFW's own NSGL path is
-;;          unreliable inside a Racket process; CGL gives us the same core
-;;          profile everywhere.
-;;
-;;   other  GLFW creates the OpenGL 3.3-core context itself (the default
-;;          path; exercised on Linux and Windows).
-;;
-;; Everything above this layer (renderer, text, UI) is pure Racket. The
-;; mac-only ffi modules resolve their libraries lazily, so requiring them
-;; here is safe on every platform.
+;; Everything above this layer (renderer, text, UI) is pure Racket.
 
 (require ffi/unsafe
          racket/bool
-         racket/promise
          "ffi/glfw.rkt"
-         "ffi/gl.rkt"
-         "ffi/objc.rkt"
-         "ffi/cgl.rkt")
+         "ffi/gl.rkt")
 
 (provide platform-window?
          platform-window-glfw
-         platform-window-kind
          open-platform-window!
          close-platform-window!
          platform-init!
@@ -61,19 +51,10 @@
 
 ;; ---- state -------------------------------------------------------------------
 
-(struct platform-window (glfw        ; GLFWwindow handle
-                         context     ; CGLContextObj on macOS, #f elsewhere
-                         nsctx       ; NSOpenGLContext on macOS, #f elsewhere
-                         kind)       ; 'cgl | 'glfw-gl
+(struct platform-window (glfw)
   #:transparent)
 
-(define macos? (eq? (system-type 'os) 'macosx))
 (define initialized? #f)
-
-;; GLFW native access handle (macOS only), resolved on first use.
-(define glfw-get-cocoa-window
-  (delay
-    (get-ffi-obj "glfwGetCocoaWindow" glfw-lib (_fun _GLFWwindow -> _pointer))))
 
 ;; ---- lifecycle ---------------------------------------------------------------
 
@@ -100,85 +81,51 @@
   (glfwDefaultWindowHints)
   (glfwWindowHint GLFW_VISIBLE (if visible? GLFW_TRUE GLFW_FALSE))
   (glfwWindowHint GLFW_RESIZABLE (if resizable? GLFW_TRUE GLFW_FALSE))
-  (cond
-    [macos?
-     ;; Windowing only; the context is created via CGL below.
-     (glfwWindowHint GLFW_CLIENT_API GLFW_NO_API)]
-    [else
-     (glfwWindowHint GLFW_CLIENT_API GLFW_OPENGL_API)
-     (glfwWindowHint GLFW_CONTEXT_VERSION_MAJOR 3)
-     (glfwWindowHint GLFW_CONTEXT_VERSION_MINOR 3)
-     (glfwWindowHint GLFW_OPENGL_PROFILE GLFW_OPENGL_CORE_PROFILE)
-     (glfwWindowHint GLFW_OPENGL_FORWARD_COMPAT GLFW_TRUE)])
+  ;; Legacy-profile context on every platform (see module note). Leaving the
+  ;; version/profile hints at their defaults requests exactly that.
+  (glfwWindowHint GLFW_CLIENT_API GLFW_OPENGL_API)
+  ;; 4x MSAA: antialiases the tessellated rounded corners in fixed-function
+  (glfwWindowHint GLFW_SAMPLES 4)
   (define win (glfwCreateWindow width height title #f #f))
   (unless win
     (error 'tessera "failed to create a window (is a display available?)"))
   (when (and min-width min-height)
     (glfwSetWindowSizeLimits win min-width min-height GLFW_DONT_CARE GLFW_DONT_CARE))
-  (define pw
-    (cond
-      [macos?
-       (define ctx (cgl-create-core-context!))
-       (define nswin ((force glfw-get-cocoa-window) win))
-       (define content-view (msg-send/id nswin (objc-sel "contentView")))
-       (define nsctx
-         (msg-send/id1 (msg-send/id (objc-class "NSOpenGLContext") (objc-sel "alloc"))
-                       (objc-sel "initWithCGLContextObj:")
-                       ctx))
-       (unless nsctx
-         (error 'tessera "NSOpenGLContext initWithCGLContextObj: failed"))
-       (msg-send/void1 nsctx (objc-sel "setView:") content-view)
-       (platform-window win ctx nsctx 'cgl)]
-      [else
-       (glfwMakeContextCurrent win)
-       (platform-window win #f #f 'glfw-gl)]))
-  (install-gl-loader! pw)
-  (pw-vsync! pw #t)
+  (glfwMakeContextCurrent win)
+  (install-gl-loader!)
+  (glfwSwapInterval 1)
   (when maximize (glfwMaximizeWindow win))
-  pw)
+  (platform-window win))
 
 (define (close-platform-window! pw)
-  ;; The NSOpenGLContext adopted the CGL context at creation (it owns the
-  ;; final release), so only the Cocoa side is released here.
-  (glfwDestroyWindow (platform-window-glfw pw))
-  (when (platform-window-nsctx pw)
-    (msg-send/id (platform-window-nsctx pw) (objc-sel "release"))))
+  (glfwDestroyWindow (platform-window-glfw pw)))
 
 ;; ---- GL plumbing --------------------------------------------------------------
 
-;; Point the GL loader at the right resolution strategy for this context.
-(define (install-gl-loader! pw)
-  (cond
-    [(eq? (platform-window-kind pw) 'cgl)
-     ;; dlsym straight from OpenGL.framework: every core entry point tessera
-     ;; uses is exported there and dispatches through the current CGL context.
-     (define libgl (ffi-lib "/System/Library/Frameworks/OpenGL.framework/OpenGL"))
-     (gl-set-loader!
-      (λ (name)
-        (with-handlers ([exn:fail? (λ (_) #f)])
-          (get-ffi-obj name libgl _fpointer))))]
-    [else
-     (gl-set-loader! (λ (name) (glfwGetProcAddress name)))]))
+;; Every GL entry point tessera uses is a GL 2.1-era export. Resolution is
+;; platform-dispatched: on macOS, GLFW's proc lookup serves only contexts
+;; created through its NSGL core path, so we dlsym OpenGL.framework directly
+;; (every legacy export is a direct symbol there); elsewhere
+;; glfwGetProcAddress works.
+(define (install-gl-loader!)
+  (if (eq? (system-type 'os) 'macosx)
+      (let ([libgl (ffi-lib "/System/Library/Frameworks/OpenGL.framework/OpenGL")])
+        (gl-set-loader!
+         (λ (name)
+           (with-handlers ([exn:fail? (λ (_) #f)])
+             (get-ffi-obj name libgl _fpointer)))))
+      (gl-set-loader! (λ (name) (glfwGetProcAddress name)))))
 
 ;; ---- per-frame GL --------------------------------------------------------------
 
 (define (pw-make-current! pw)
-  (cond
-    [(eq? (platform-window-kind pw) 'cgl)
-     (cgl-current! (platform-window-context pw))]
-    [else (glfwMakeContextCurrent (platform-window-glfw pw))]))
+  (glfwMakeContextCurrent (platform-window-glfw pw)))
 
 (define (pw-swap! pw)
-  (cond
-    [(eq? (platform-window-kind pw) 'cgl)
-     (cgl-flush! (platform-window-context pw))]
-    [else (glfwSwapBuffers (platform-window-glfw pw))]))
+  (glfwSwapBuffers (platform-window-glfw pw)))
 
 (define (pw-vsync! pw on?)
-  (cond
-    [(eq? (platform-window-kind pw) 'cgl)
-     (cgl-set-vsync! (platform-window-context pw) on?)]
-    [else (glfwSwapInterval (if on? 1 0))]))
+  (glfwSwapInterval (if on? 1 0)))
 
 ;; ---- queries -------------------------------------------------------------------
 
