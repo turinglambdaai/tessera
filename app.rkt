@@ -309,8 +309,9 @@
           (set! focus-value v)
           (set! caret (string-length v)))))
 
-    (when (or quit? (pw-should-close? pw))
-      (close-platform-window! pw))
-
-    (unless (or quit? (pw-should-close? pw))
-      (main-loop (glfwGetTime)))))
+    (cond
+      [(or quit? (pw-should-close? pw))
+       (close-platform-window! pw)
+       state]
+      [else
+       (main-loop (glfwGetTime))])))
