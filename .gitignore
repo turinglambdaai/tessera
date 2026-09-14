@@ -1,0 +1,7 @@
+compiled/
+doc/
+*.zo
+*.so
+.DS_Store
+/snapshots/*.png
+!snapshots/README.md
