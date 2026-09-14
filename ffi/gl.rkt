@@ -71,6 +71,7 @@
 (defgl glBlendFunc         (_fun _uint _uint -> _void))
 (defgl glScissor           (_fun _int _int _int _int -> _void))
 (defgl glPixelStorei       (_fun _uint _int -> _void))
+(defgl glGetIntegerv      (_fun _uint _pointer -> _void))
 
 ;; shaders / program
 (defgl glCreateShader      (_fun _uint -> _uint))
@@ -144,6 +145,7 @@
 (define GL_RGBA8 #x8058)
 (define GL_R8    #x8229)
 (define GL_TEXTURE_2D #x0DE1)
+(define GL_TEXTURE_BINDING_2D #x8069)
 (define GL_TEXTURE0 #x84C0)
 (define GL_TEXTURE1 #x84C1)
 (define GL_TEXTURE2 #x84C2)

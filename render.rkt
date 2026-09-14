@@ -29,7 +29,8 @@
          racket/format
          tessera/ffi/gl)
 
-(provide (struct-out renderer)
+(provide flush-debug
+         (struct-out renderer)
          (struct-out color)
          color-hex
          color-argb
@@ -45,6 +46,7 @@
          r-line!
          r-circle!
          r-quad-uv!
+         r-quad-uv-raw!
          r-use-texture!
          r-scissor-push!
          r-scissor-pop!
@@ -91,6 +93,12 @@
   #:mutable #:transparent)
 
 (define (make-texture-raw internal fmt w h bytes)
+  ;; NOTE: creation must not leave the new texture bound — callers create
+  ;; textures mid-frame (lazy font atlases), and a silent re-bind here would
+  ;; make the pending batch draw with the wrong texture. The previous
+  ;; binding is restored before returning.
+  (define prev (malloc _uint 1 'raw))
+  (glGetIntegerv GL_TEXTURE_BINDING_2D prev)
   (define tex (malloc _uint 1 'raw))
   (ptr-set! tex _uint 0 0)
   (glGenTextures 1 tex)
@@ -103,6 +111,7 @@
   (glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_EDGE)
   (glTexImage2D GL_TEXTURE_2D 0 internal w h 0 fmt GL_UNSIGNED_BYTE
                 (if bytes bytes #f))
+  (glBindTexture GL_TEXTURE_2D (ptr-ref prev _uint))
   id)
 
 ;; Alpha (coverage) texture for font atlases: fixed-function MODULATE keeps
@@ -147,10 +156,14 @@
       [else
        (glDisable GL_TEXTURE_2D)])))
 
+(define flush-debug (make-parameter #f))
+
 (define (flush! r)
   (define n (renderer-vcount r))
   (when (> n 0)
-    (glDrawArrays GL_TRIANGLES 0 (quotient n 3))
+    (when (flush-debug)
+      (eprintf "flush: tris=~a tex=~a\n" (quotient n 3) (renderer-tex r)))
+    (glDrawArrays GL_TRIANGLES 0 (quotient n floats-per-vert))
     (set-renderer-vcount! r 0)))
 
 (define (ensure-capacity! r extra-verts)
@@ -336,10 +349,16 @@
     (r-circle! r x0 y0 hw c)
     (r-circle! r x1 y1 hw c)))
 
-;; Textured quad (text glyph or image), uv in normalized texture coords.
+;; Textured quad (image), position/size in points, uv normalized.
 ;; The caller binds the texture with r-use-texture! first.
 (define (r-quad-uv! r x y w h u0 v0 u1 v1 c)
   (push-quad-corners! r (px r x) (px r y) (px r (+ x w)) (px r (+ y h))
+                      c c c c u0 v0 u1 v1))
+
+;; Textured quad already in device pixels — the fast path draw-text! uses,
+;; since glyph metrics come from the atlas in device px.
+(define (r-quad-uv-raw! r x y w h u0 v0 u1 v1 c)
+  (push-quad-corners! r x y (+ x w) (+ y h)
                       c c c c u0 v0 u1 v1))
 
 ;; ---- frame lifecycle ---------------------------------------------------------------------
@@ -364,7 +383,8 @@
   (glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA))
 
 (define (renderer-clear! r c)
-  (glClearColor (color-r c) (color-g c) (color-b c) (color-a c))
+  (glClearColor (exact->inexact (color-r c)) (exact->inexact (color-g c))
+                (exact->inexact (color-b c)) (exact->inexact (color-a c)))
   (glClear GL_COLOR_BUFFER_BIT))
 
 (define (renderer-end-frame! r)

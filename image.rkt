@@ -321,8 +321,8 @@
   (define header-size (u32le bs 14))
   (unless (>= header-size 40)
     (error 'bmp-decode "unsupported BMP header"))
-  (define width (integer-bytes->integer (subbytes bs 18 22) #f #t))
-  (define raw-height (integer-bytes->integer (subbytes bs 22 26) #t #t))  ; signed
+  (define width (integer-bytes->integer (subbytes bs 18 22) #f #f))
+  (define raw-height (integer-bytes->integer (subbytes bs 22 26) #t #f))  ; signed
   (define bpp (u16le bs 28))
   (define compression (u32le bs 30))
   (unless (= compression 0)

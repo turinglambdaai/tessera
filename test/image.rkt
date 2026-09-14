@@ -59,7 +59,7 @@
   (+ crc-pos 4))
 (define after-ihdr (chunk-at written 8))
 (define after-idat (chunk-at written after-ihdr))
-(chunk-at written after-idat) ; IEND terminates exactly
+(chunk-at written after-idat)
 (delete-file tmp)
 
 ;; ---- BMP decode ----------------------------------------------------------------
@@ -67,15 +67,15 @@
 ;; hand-build a 2x2 24bpp bottom-up BMP
 (define bmp (make-bytes 70 0))
 (bytes-set! bmp 0 66) (bytes-set! bmp 1 77)          ; "BM"
-(integer->integer-bytes 70 4 #f #t bmp 2)            ; file size
-(integer->integer-bytes 54 4 #f #t bmp 10)           ; pixel offset
-(integer->integer-bytes 40 4 #f #t bmp 14)           ; header size
-(integer->integer-bytes 2 4 #f #t bmp 18)            ; width
-(integer->integer-bytes 2 4 #f #t bmp 22)            ; height (positive = bottom-up)
-(integer->integer-bytes 1 2 #f #t bmp 26)            ; planes
-(integer->integer-bytes 24 2 #f #t bmp 28)           ; bpp
+(integer->integer-bytes 70 4 #f #f bmp 2)            ; file size
+(integer->integer-bytes 54 4 #f #f bmp 10)           ; pixel offset
+(integer->integer-bytes 40 4 #f #f bmp 14)           ; header size
+(integer->integer-bytes 2 4 #f #f bmp 18)            ; width
+(integer->integer-bytes 2 4 #f #f bmp 22)            ; height (positive = bottom-up)
+(integer->integer-bytes 1 2 #f #f bmp 26)            ; planes
+(integer->integer-bytes 24 2 #f #f bmp 28)           ; bpp
 ;; row 1 (bottom): red pixel then green pixel, padded to 8 bytes
-(integer->integer-bytes 255 4 #f #t bmp 54)          ; B=255... set channels below
+(integer->integer-bytes 255 4 #f #f bmp 54)          ; B=255... set channels below
 (bytes-set! bmp 54 0) (bytes-set! bmp 55 0) (bytes-set! bmp 56 255)   ; red
 (bytes-set! bmp 57 0) (bytes-set! bmp 58 255) (bytes-set! bmp 59 0)   ; green
 ;; row 0 (top): blue then white
@@ -85,18 +85,18 @@
 (check-equal? bw 2)
 (check-equal? bh 2)
 (check-equal? (subbytes bp 0 16)
-              (bytes 255 0 0 255   ; top-left: blue
+              (bytes 0 0 255 255    ; top-left: blue
                      255 255 255 255 ; top-right: white
                      255 0 0 255   ; bottom-left: red
-                     0 255 0 255)) ; bottom-right: green
+                     0 255 0 255) "bmp pixels") ; bottom-right: green
 
 ;; ---- TGA decode ----------------------------------------------------------------
 
 ;; 2x1 uncompressed 32bpp, top-origin
 (define tga (make-bytes (+ 18 8) 0))
 (bytes-set! tga 2 2)
-(integer->integer-bytes 2 2 #f #t tga 12)
-(integer->integer-bytes 1 2 #f #t tga 14)
+(integer->integer-bytes 2 2 #f #f tga 12)
+(integer->integer-bytes 1 2 #f #f tga 14)
 (bytes-set! tga 16 32)
 (bytes-set! tga 17 32)  ; top-origin bit (0x20) + 8 alpha bits
 (bytes-set! tga 18 10) (bytes-set! tga 19 20) (bytes-set! tga 20 30) (bytes-set! tga 21 40)
