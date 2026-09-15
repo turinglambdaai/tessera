@@ -36,6 +36,7 @@
          slider
          image
          spinner
+         modal
          view?)
 
 ;; ---- node model ------------------------------------------------------------------
@@ -104,6 +105,14 @@
 ;; Indeterminate activity indicator (animated; needs a running `run` loop).
 (define spinner
   (node-builder 'spinner))
+
+;; Modal overlay: dims the whole window and floats its children centered.
+;; While present, clicks outside the content are swallowed and Tab cycling
+;; is restricted to the modal subtree. Place it anywhere in the tree.
+(define modal
+  (make-keyword-procedure
+   (λ (kws kw-vals . children)
+      (node 'modal (kws->props kws kw-vals) (filter node? children)))))
 
 ;; ---- constructor reference (props consumed by tessera/layout) -----------------------
 ;;

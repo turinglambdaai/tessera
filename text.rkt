@@ -23,6 +23,7 @@
          (struct-out font-set)
          (struct-out atlas)
          rasterize-glyph
+         x->caret
          find-font-file
          make-font-set
          font-set-texture
@@ -439,3 +440,20 @@
                              color))
            (define adv (font-units->px f (glyph-advance f gid) s))
            (draw (cdr chars) gid (+ cx kern adv))])))))
+
+;; Nearest caret index for a click at local offset `x-off` (device px):
+;; largest i such that the width of the first i chars fits before x-off.
+(define (x->caret fs str x-off)
+  (define f (font-set-font fs))
+  (define s (font-set-px-size fs))
+  (let loop ([chars (string->list str)] [prev-gid #f] [x 0.0] [best 0])
+    (cond
+      [(null? chars) best]
+      [else
+       (define gid ((font-cmap-lookup f) (car chars)))
+       (define kern (if prev-gid (font-units->px f (glyph-kern f prev-gid gid) s) 0))
+       (define adv (font-units->px f (glyph-advance f gid) s))
+       (define nx (+ x kern adv))
+       (if (<= (- nx x-off) (/ adv 2))
+           (loop (cdr chars) gid nx (add1 best))
+           best)])))

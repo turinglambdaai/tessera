@@ -65,6 +65,8 @@
 
 (define current-hover-path (make-parameter '()))
 (define current-focus-path (make-parameter '()))
+;; (cons start end) caret range of the focused input's selection, or #f
+(define current-input-sel (make-parameter #f))
 ;; Frame time in seconds — drives the spinner animation. The run loop sets
 ;; this every frame; snapshot rendering leaves 0 for deterministic output.
 (define current-frame-time (make-parameter 0.0))
@@ -234,8 +236,19 @@
          (for/list ([k (in-list kids)] [idx (in-naturals)])
            (rec k (append path (list idx)) (+ x pad) (+ y pad)
                 (max 0 (- w (* 2 pad))) (max 0 (- h (* 2 pad)))))]
+        [(eq? kind 'modal)
+         ;; modal content is centered over the whole top-level area
+         (for/list ([k (in-list kids)] [idx (in-naturals)])
+           (define-values (kw kh) (measure-node ctx k))
+           (rec k (append path (list idx))
+                (/ (- avail-w kw) 2) (/ (- avail-h kh) 2) kw kh))]
         [else '()]))
-    (laid n path x y w h laid-kids)))
+    ;; modal overlays cover the whole top-level area regardless of depth
+    (define-values (fx fy fw fh)
+      (if (eq? kind 'modal)
+          (values 0 0 avail-w avail-h)
+          (values x y w h)))
+    (laid n path fx fy fw fh laid-kids)))
 
 (define (draw-laid! r laid ctx)
   (let rec ([l laid])
@@ -320,6 +333,14 @@
          (define alpha (+ 0.15 (* 0.85 (/ i 8))))
          (r-circle! r (+ cx dx) (+ cy dy) (- (/ sz 8) 1)
                     (color (color-r col) (color-g col) (color-b col) alpha)))]
+      ['modal
+       ;; dim backdrop, then the centered dialog panel
+       (r-rect! r 0 0 (laid-w l) (laid-h l) (color 0 0 0 0.35))
+       (for ([k (in-list (laid-children l))])
+         (define bg (or (node-prop (laid-node k) 'bg) (theme-surface (theme-current))))
+         (r-round! r (laid-x k) (laid-y k) (laid-w k) (laid-h k)
+                   (theme-radius (theme-current)) bg)
+         (rec k))]
       ['divider
        (r-rect! r x y w 1 (or (node-prop n 'color) (theme-border (theme-current))))]
       ['spacer (void)]
@@ -402,7 +423,16 @@
       (if (node-prop n 'password?)
           (make-string (string-length value) #\u2022)
           value))
-    (cond
+      (define sel (current-input-sel))
+      (when sel
+        ;; selection highlight: accent at low alpha behind the text
+        (define sc (renderer-scale r))
+        (define off0 (/ (text-width f (substring shown 0 (min (car sel) (cdr sel)))) sc))
+        (define off1 (/ (text-width f (substring shown 0 (max (car sel) (cdr sel)))) sc))
+        (r-rect! r (+ x off0) (+ y (/ (- h size) 2)) (- off1 off0) size
+                 (color (color-r (theme-accent t)) (color-g (theme-accent t))
+                        (color-b (theme-accent t)) 0.35)))
+      (cond
       [(and (string=? value "") (not (string=? (node-prop n 'placeholder "") "")))
        (draw-text! r fs (node-prop n 'placeholder) (+ x 8) (+ y (/ (- h size) 2))
                    (theme-text-faint t))]

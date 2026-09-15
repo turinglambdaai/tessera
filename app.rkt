@@ -98,6 +98,9 @@
   (define quit? #f)
   (define shown? #f)
   (define drag-slider-path #f)
+  (define sel-anchor #f)        ; selection anchor caret, or #f
+  (define last-ctx #f)          ; most recent font ctx (input hit tests)
+  (define input-press? #f)      ; mouse is down on the focused input
   (define events '())
 
   (define (push-event! e) (set! events (cons e events)))
@@ -128,7 +131,17 @@
        (push-event! (list 'click button action)))))
   (glfwSetCursorPosCallback
    win
-   (lambda (w x y) (set! mx x) (set! my y)))
+   (lambda (w x y)
+     (set! mx x) (set! my y)
+     ;; extend the input selection while drag-selecting
+     (when (and input-press? laid-root (not (null? focus-path)))
+       (define l (path->laid laid-root focus-path))
+       (when (and l (eq? (node-kind (laid-node l)) 'input))
+         (define fs (ui-ctx-font last-ctx (theme-font-size (theme-current))))
+         (when fs
+           (define fset (car fs))
+           (define x-off (- x (+ (laid-x l) 8)))
+           (set! caret (x->caret fset focus-value (max 0 x-off))))))))
   (glfwSetKeyCallback
    win
    (lambda (w key scancode action mods)
@@ -194,7 +207,14 @@
          (when (node-prop n 'enabled? #t)
            (set! focus-path (laid-path hit))
            (set! focus-value (node-prop n 'value))
-           (set! caret (string-length focus-value)))]
+           (define fs (ui-ctx-font last-ctx (theme-font-size (theme-current))))
+           (set! caret
+                 (if fs
+                     (x->caret (car fs) focus-value
+                               (max 0 (- mx (+ (laid-x hit) 8))))
+                     (string-length focus-value)))
+           (set! sel-anchor caret)
+           (set! input-press? #t))]
         [_ (void)])))
 
   (define (slider-apply! l cursor-x)
@@ -223,12 +243,18 @@
       (set! caret (sub1 caret))
       (dispatch-input-change!)))
 
-  (define (dispatch-input-change!)
-    (define l
-      (and laid-root (not (null? focus-path)) (path->laid laid-root focus-path)))
-    (when (and l (eq? (node-kind (laid-node l)) 'input))
-      (define cb (node-prop (laid-node l) 'on-change))
-      (when cb (send! (cb focus-value)))))
+  ;; selection is (cons lo hi) caret indices, or #f when collapsed
+  (define (sel-range)
+    (and sel-anchor (not (= sel-anchor caret))
+         (cons (min sel-anchor caret) (max sel-anchor caret))))
+  (define (sel-delete!)
+    (define r (sel-range))
+    (when r
+      (set! caret (car r))
+      (set! sel-anchor caret)
+      (set! focus-value
+            (string-append (substring focus-value 0 (car r))
+                           (substring focus-value (cdr r))))))
 
   (define (handle-key! key action mods)
     (define ctrl? (not (zero? (bitwise-and mods GLFW_MOD_CONTROL))))
@@ -244,40 +270,29 @@
                    [#f #f]))
         (set! quit? #t))
       (cond
-        ;; Tab focus cycling over interactive widgets
-        [(and (= key GLFW_KEY_TAB) (laid-root))
-         (define order
-           (let walk ([l laid-root] [acc '()])
-             (define acc2
-               (if (and (memq (node-kind (laid-node l)) '(input button checkbox slider))
-                        (node-prop (laid-node l) 'enabled? #t))
-                   (append acc (list (laid-path l)))
-                   acc))
-             (for/fold ([a acc2]) ([k (in-list (laid-children l))])
-               (walk k a))))
-         (define idx
-           (for/first ([p (in-list order)] [i (in-naturals)]
-                       #:when (equal? p focus-path))
-             i))
-         (set! focus-path
-               (if (null? order)
-                   '()
-                   (list-ref order (modulo (if idx (add1 idx) 0) (length order)))))]
         ;; text editing on the focused input
         [(and (not (null? focus-path)) (= key GLFW_KEY_BACKSPACE))
-         (when (> caret 0)
-           (set! focus-value
-                 (string-append (substring focus-value 0 (sub1 caret))
-                                (substring focus-value caret)))
-           (set! caret (sub1 caret))
-           (dispatch-input-change!))]
+         (cond
+           [(sel-range)
+            (sel-delete!) (dispatch-input-change!)]
+           [else
+            (when (> caret 0)
+              (set! focus-value
+                    (string-append (substring focus-value 0 (sub1 caret))
+                                   (substring focus-value caret)))
+              (set! caret (sub1 caret))
+              (dispatch-input-change!))])]
         [(and (not (null? focus-path)) (= key GLFW_KEY_DELETE))
-         (when (< caret (string-length focus-value))
-           (set! focus-value
-                 (string-append (substring focus-value 0 caret)
-                                (substring focus-value (add1 caret))))
-           (set! caret (string-length focus-value))
-           (dispatch-input-change!))]
+         (cond
+           [(sel-range)
+            (sel-delete!) (dispatch-input-change!)]
+           [else
+            (when (< caret (string-length focus-value))
+              (set! focus-value
+                    (string-append (substring focus-value 0 caret)
+                                   (substring focus-value (add1 caret))))
+              (set! caret (string-length focus-value))
+              (dispatch-input-change!))])]
         [(and (not (null? focus-path)) (= key GLFW_KEY_LEFT))
          (set! caret (max 0 (sub1 caret)))]
         [(and (not (null? focus-path)) (= key GLFW_KEY_RIGHT))
@@ -290,39 +305,33 @@
          (pw-clipboard-set! pw focus-value)]
         [(and (not (null? focus-path)) ctrl? (= key GLFW_KEY_X))
          (pw-clipboard-set! pw focus-value)
-         (when (> caret 0)
-           (set! focus-value
-                 (string-append (substring focus-value 0 (sub1 caret))
-                                (substring focus-value caret)))
-           (set! caret (sub1 caret))
-           (dispatch-input-change!))]
+         (backspace!)]
         [(and (not (null? focus-path)) ctrl? (= key GLFW_KEY_V))
          (define clip (pw-clipboard-get pw))
          (when (and clip (non-empty-string? clip))
-           (set! focus-value
-                 (string-append (substring focus-value 0 caret)
-                                clip
-                                (substring focus-value caret)))
-           (set! caret (+ caret (string-length clip)))
+           (insert-at-caret! clip)
            (dispatch-input-change!))]
-        [(and (not (null? focus-path)) (or (= key GLFW_KEY_ENTER) (= key GLFW_KEY_SPACE)))
-         (define l (path->laid laid-root focus-path))
-         (when (and l (memq (node-kind (laid-node l)) '(button checkbox)))
-           (define n (laid-node l))
-           (match (node-kind n)
-             ['button
-              (when (node-prop n 'enabled? #t)
-                (define cb (node-prop n 'on-click))
-                (when cb (send! (cb))))]
-             ['checkbox
-              (when (node-prop n 'enabled? #t)
-                (define cb (node-prop n 'on-change))
-                (when cb (send! (cb (not (node-prop n 'checked?))))))]
-             [_ (void)]))]
+        [(and (not (null? focus-path)) ctrl? (= key GLFW_KEY_A))
+         (set! sel-anchor 0)
+         (set! caret (string-length focus-value))]
         [else (void)])))
 
+  (define (dispatch-input-change!)
+    (define l
+      (and laid-root (not (null? focus-path)) (path->laid laid-root focus-path)))
+    (when (and l (eq? (node-kind (laid-node l)) 'input))
+      (define cb (node-prop (laid-node l) 'on-change))
+      (when cb (send! (cb focus-value)))))
+
+  (define (insert-at-caret! str)
+    (set! focus-value
+          (string-append (substring focus-value 0 caret)
+                         str
+                         (substring focus-value caret)))
+    (set! caret (+ caret (string-length str))))
+
   (define (handle-char! cp)
-    (when (and (not (null? focus-path)) laid-root (>= cp 32))
+(when (and (not (null? focus-path)) laid-root (>= cp 32))
       (define l (path->laid laid-root focus-path))
       (when (and l (eq? (node-kind (laid-node l)) 'input))
         (set! focus-value
@@ -343,6 +352,7 @@
     (define-values (ww wh) (pw-window-size pw))
     (define scale (/ fbw (max 1 ww)))
     (define ctx (make-font-ctx scale))
+    (set! last-ctx ctx)
 
     (renderer-begin-frame! renderer fbw fbh scale)
     (renderer-clear! renderer (theme-bg theme))
