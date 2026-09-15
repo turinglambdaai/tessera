@@ -19,11 +19,14 @@
 
 (require racket/list
          racket/match
+         racket/promise
+         racket/math
          racket/string
          tessera/render
          tessera/text
          tessera/theme
-         tessera/view)
+         tessera/view
+         tessera/image)
 
 (provide (struct-out laid)
          (struct-out ui-ctx)
@@ -33,6 +36,7 @@
          draw-laid!
          hit-test
          hit-interactive
+         in-rect?
          path->laid
          current-hover-path
          current-focus-path)
@@ -42,21 +46,28 @@
 ;; fonts: procedure pt-size -> (cons primary-font-set fallback-or-#f),
 ;; memoized per size by the maker. The fallback serves glyphs the primary
 ;; face lacks (CJK on a Latin-primary stack).
-(struct ui-ctx (fonts scale))
+(struct ui-ctx (fonts scale
+                     scroll-offsets   ; hash: path -> px offset (mutable, run-owned)
+                     images)          ; hash: src -> (list w h texture-id)
+  #:transparent)
 
-(define (make-ui-ctx font-make fallback-make scale)
+(define (make-ui-ctx font-make fallback-make scale
+                     [scroll-offsets (make-hash)] [images (make-hash)])
   (define cache (make-hash))
   (define (fonts pt)
     (hash-ref! cache pt
                (λ () (define fb (and fallback-make (fallback-make pt)))
                   (cons (font-make pt) fb))))
-  (ui-ctx fonts scale))
+  (ui-ctx fonts scale scroll-offsets images))
 
 (define (ui-ctx-font ctx pt-size)
   ((ui-ctx-fonts ctx) pt-size))
 
 (define current-hover-path (make-parameter '()))
 (define current-focus-path (make-parameter '()))
+;; Frame time in seconds — drives the spinner animation. The run loop sets
+;; this every frame; snapshot rendering leaves 0 for deterministic output.
+(define current-frame-time (make-parameter 0.0))
 
 ;; ---- laid tree ---------------------------------------------------------------------
 
@@ -121,9 +132,44 @@
     ['progress (values 120 (node-prop n 'height 6))]
     ['input (values 160 (+ (theme-font-size (theme-current)) 12))]
     ['divider (values 1 1)]
+    ['scroll
+     (define iw (node-prop n 'width))
+     (define ih (node-prop n 'height))
+     (values (or iw 200) (or ih 150))]
+    ['slider (values 160 24)]
+    ['image
+     (define-values (iw ih)
+       (if (hash-ref (ui-ctx-images ctx) (node-prop n 'src) #f)
+           (let ([t (hash-ref (ui-ctx-images ctx) (node-prop n 'src))])
+             (values (car t) (cadr t)))
+           (image-size (node-prop n 'src))))
+     (values (or (node-prop n 'width) iw)
+             (or (node-prop n 'height) ih))]
+    ['spinner
+     (define sz (node-prop n 'size 20))
+     (values sz sz)]
     [else (values 0 0)]))
 
+;; ---- image cache ---------------------------------------------------------------------
+
+;; src -> (list width height texture-id-or-#f); texture created lazily when
+;; a GL context is current (see image-ensure-texture!).
+(define image-cache (make-hash))
+
+(define (image-size src)
+  (hash-ref! image-cache src
+             (λ ()
+               (define-values (w h rgba) (image-load src))
+               (list w h #f))))
+
+(define (image-ensure-texture! src)
+  (define entry (image-size src))
+  (unless (vector-ref entry 2)
+    (vector-set! entry 2 (renderer-texture-rgba (vector-ref entry 0) (vector-ref entry 1) #f)))
+  (vector-ref entry 2))
+
 ;; ---- layout ------------------------------------------------------------------------
+
 
 ;; ---- layout ------------------------------------------------------------------------
 
@@ -229,6 +275,51 @@
        (when (> v 0)
          (r-round! r x y (max h (* w v)) h 3 col))]
       ['input (draw-input! r n ctx x y w h path)]
+      ['divider
+       (r-rect! r x y w 1 (or (node-prop n 'color) (theme-border (theme-current))))]
+      ['scroll
+       (r-scissor-push! r x y w h)
+       (for ([k (in-list (laid-children l))]) (rec k))
+       (r-scissor-pop! r)
+       ;; scrollbar thumb: only when content overflows
+       (define kid (and (not (null? (laid-children l))) (car (laid-children l))))
+       (when kid
+         (define max-off (max 1 (- (laid-h kid) h)))
+         (define off (min max-off (max 0 (hash-ref (ui-ctx-scroll-offsets ctx) path 0))))
+         (define thumb-h (max 24 (* h (/ h (laid-h kid)))))
+         (define track-h (- h thumb-h))
+         (define thumb-y (+ y (* track-h (/ off max-off))))
+         (r-round! r (+ x w -4) (+ thumb-y 2) 4 (- thumb-h 4) 2 (theme-border (theme-current))))]
+      ['slider
+       (define v (node-prop n 'value))
+       (define enabled? (node-prop n 'enabled? #t))
+       (define t (theme-current))
+       (define hover? (equal? path (current-hover-path)))
+       (define track-y (+ y (/ h 2)))
+       (define col (if enabled? (theme-accent t) (theme-text-faint t)))
+       (r-round! r (+ x 9) (- track-y 3) (- w 18) 6 3 (theme-border t))
+       (r-round! r (+ x 9) (- track-y 3) (max 6 (* (- w 18) v)) 6 3 col)
+       (define kx (+ x 9 (* (- w 18) v)))
+       (r-circle! r kx track-y 9 (if enabled? (theme-text t) (theme-text-faint t)))
+       (r-circle! r kx track-y 7 (if (equal? path (current-focus-path)) (theme-surface-raised t) (theme-surface t)))]
+      ['image
+       (define src (node-prop n 'src))
+       (define tex (image-ensure-texture! src))
+       (r-use-texture! r tex)
+       (r-quad-uv! r x y w h 0.0 0.0 1.0 1.0 (color 1 1 1 1))]
+      ['spinner
+       (define sz (node-prop n 'size 20))
+       (define col (or (node-prop n 'color) (theme-accent (theme-current))))
+       (define cx (+ x (/ w 2)))
+       (define cy (+ y (/ h 2)))
+       (define rot (* 2.4 (current-frame-time)))
+       (for ([i (in-range 8)])
+         (define a (+ rot (* i (/ (* 2 pi) 8))))
+         (define dx (* (/ sz 2) (cos a)))
+         (define dy (* (/ sz 2) (sin a)))
+         (define alpha (+ 0.15 (* 0.85 (/ i 8))))
+         (r-circle! r (+ cx dx) (+ cy dy) (- (/ sz 8) 1)
+                    (color (color-r col) (color-g col) (color-b col) alpha)))]
       ['divider
        (r-rect! r x y w 1 (or (node-prop n 'color) (theme-border (theme-current))))]
       ['spacer (void)]

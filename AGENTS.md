@@ -46,6 +46,10 @@ view tree; the runtime draws it and routes events back as messages.
 | Horizontal group | `(row #:spacing 12 (text "A") (text "B"))` |
 | Vertical group | `(column #:spacing 8 (text "A") (text "B"))` |
 | Flexible spacer | `(spacer #:flex 1)` |
+| Drag control | `(slider 0.5 #:on-change (λ (v) (list 'vol v)))` |
+| Scrollable area | `(scroll kids...)` inside a bounded container |
+| Show an image | `(image "logo.qoi" #:width 120)` |
+| Busy indicator | `(spinner #:size 18)` |
 | Rule | `(divider)` |
 
 ## The Elm loop (how state flows)
@@ -91,6 +95,8 @@ otherwise copy:
   wrap with `xvfb-run -a`.
 - **`raco test` sets the working directory to the test file's folder** —
   resolve output paths relative to it.
+- **`slider` `on-change` fires continuously while dragging** — throttle in
+  `update` if each step is expensive.
 
 ## How to verify GUI code you write
 

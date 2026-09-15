@@ -32,6 +32,10 @@
          input
          progress
          divider
+         scroll
+         slider
+         image
+         spinner
          view?)
 
 ;; ---- node model ------------------------------------------------------------------
@@ -78,6 +82,28 @@
 (define input (node-builder 'input 'value))
 (define progress (node-builder 'progress 'value))
 (define divider (node-builder 'divider))
+
+;; Scrollable viewport: content taller than the box scrolls with the wheel.
+;; Place inside a bounded container (a column's remaining space, or give an
+;; explicit #:height / #:width). Children are clipped to the viewport.
+(define scroll
+  (make-keyword-procedure
+   (λ (kws kw-vals . children)
+      (node 'scroll (kws->props kws kw-vals) (filter node? children)))))
+
+;; Drag control. value is in [min, max]; on-change receives the new value
+;; continuously while dragging.
+(define slider
+  (node-builder 'slider 'value))
+
+;; Raster image from a .qoi/.bmp/.tga file. Natural size = bitmap size,
+;; optionally fitted into #:width x #:height (contain).
+(define image
+  (node-builder 'image 'src))
+
+;; Indeterminate activity indicator (animated; needs a running `run` loop).
+(define spinner
+  (node-builder 'spinner))
 
 ;; ---- constructor reference (props consumed by tessera/layout) -----------------------
 ;;

@@ -71,6 +71,10 @@ racket examples/counter.rkt
 | `checkbox` | `#:checked?` + `#:on-change` 接收新布尔值 |
 | `input` | 单行文本框：`#:value` `#:on-change` `#:placeholder` `#:password?` |
 | `progress` | 确定性进度条，取值 `[0,1]` |
+| `slider` | 拖拽滑块：`#:min` `#:max` `#:on-change` 拖动时连续触发 |
+| `scroll` | 滚轮滚动的裁剪视口，带滚动条指示 |
+| `image` | 位图（.qoi/.bmp/.tga），支持 `#:width`/`#:height` |
+| `spinner` | 不确定进度动画指示器 |
 | `divider` | 水平分割线 |
 | `row` / `column` | 弹性容器：`#:spacing` `#:padding` `#:align` |
 | `box` | 带内边距的圆角面板：`#:bg` `#:radius` `#:border` |
@@ -122,6 +126,7 @@ Tessera 自己的测试套件就建立在这上面：本 README 的每张截图�
 - **拒绝 CFF/PostScript 轮廓** —— `.otf` 字体加载即失败；系统回退解析会跳过它们
 - **无 IME 组合输入** —— GLFW 只投递已提交文本；CJK 输入依赖系统剪贴板/输入法工具链，不支持窗口内组合
 - **`input` 仅单行** —— 多行编辑器尚未实现
+- **字距（kerning）未启用** —— 来自 legacy `kern` 表的成对字距将在 0.3 落地
 
 ## 示例
 

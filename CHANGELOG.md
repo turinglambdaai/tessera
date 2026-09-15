@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-09-15
+
+### Fixed
+
+- **TrueType delta decoding** — the glyph coordinate walk recorded
+  positions before applying each point's delta, shifting every glyph by
+  one delta. Straight-line glyphs hid the bug; anything curved (digits,
+  CJK) rendered with chord artifacts and phantom geometry. All glyphs now
+  match a ground-truth decoder point-for-point.
+
+### Added
+
+- `scroll` — wheel-scrollable clipped viewport with a scrollbar thumb
+- `slider` — drag control with continuous `on-change`
+- `image` — .qoi/.bmp/.tga rendering with a persistent texture cache
+- `spinner` — animated indeterminate indicator
+- Hover cursors (hand over buttons, I-beam over inputs)
+- Tab / Shift-Tab focus cycling; Enter and Space activate the focused
+  button or checkbox
+- Snapshot views may be thunks, built under the requested theme
+- `tessera/snapshot` re-exports `theme-current` for callers
+
 ## [0.1.0] — 2026-09-15
 
 Initial release.
@@ -34,10 +56,10 @@ Initial release.
 - **Snapshots** (`tessera/snapshot`) — headless view-to-PNG rendering for
   tests and documentation.
 - Pure-Racket font parsing and image codecs — no C toolchain required.
-- Test suite: 38 checks covering codecs, platform, renderer, text, and
-  the run loop; snapshot PNGs verified visually.
+- Test suite: unit, smoke, run-loop, and snapshot checks; snapshot PNGs
+  verified visually.
 
-### Honest gaps (planned for 0.2+)
+### Honest gaps (planned for 0.3+)
 
 - Kerning is parsed but not applied (header-variant validation pending).
 - CFF/PostScript outline fonts are rejected at load.

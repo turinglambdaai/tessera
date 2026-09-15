@@ -8,6 +8,8 @@
          racket/bool
          tessera)
 
+(define slider-val 0.35)
+
 (define (view st)
   (match-define (list checked slider-val progress-val tab) st)
   (column

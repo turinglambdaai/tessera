@@ -9,8 +9,8 @@
 ;;
 ;; Each frame: rebuild the view -> layout -> draw -> swap; then poll
 ;; events -> route them to widget callbacks -> fold the returned messages
-;; into state. Interaction bookkeeping (hover, focus, caret) lives here,
-;; keyed by stable tree paths.
+;; into state. Interaction bookkeeping (hover, focus, caret, scroll
+;; offsets, slider drags) lives here, keyed by stable tree paths.
 
 (require racket/async-channel
          racket/contract
@@ -74,13 +74,18 @@
     (with-handlers ([exn:fail? (lambda (_e) #f)])
       (find-font-file #:require-glyph (integer->char #x4e2d))))
 
-  ;; per-scale font provider: primary face + CJK fallback face
+  ;; Per-frame font provider: primary face + CJK fallback face. Scroll
+  ;; offsets and the image-texture cache persist across frames and resizes.
+  (define scroll-offsets (make-hash))   ; path -> px offset
+  (define image-cache (make-hash))      ; src -> (vector w h texture-id)
   (define (make-font-ctx scale)
     (make-ui-ctx
      (lambda (pt) (make-font-set font-file (exact-round (* pt scale))))
      (and cjk-font-file
           (lambda (pt) (make-font-set cjk-font-file (exact-round (* pt scale)))))
-     scale))
+     scale
+     scroll-offsets
+     image-cache))
 
   ;; ---- mutable interaction state (main thread only) ---------------------------
   (define state init-state)
@@ -92,6 +97,7 @@
   (define caret 0)
   (define quit? #f)
   (define shown? #f)
+  (define drag-slider-path #f)
   (define events '())
 
   (define (push-event! e) (set! events (cons e events)))
@@ -131,19 +137,51 @@
   (glfwSetCharCallback
    win
    (lambda (w cp) (push-event! (list 'char cp))))
+  (glfwSetScrollCallback
+   win
+   (lambda (w xdy ydy) (push-event! (list 'wheel xdy ydy))))
 
-  ;; ---- input handling ------------------------------------------------------------
+  ;; ---- event handlers ------------------------------------------------------------
 
-  ;; Dispatch a click at the current cursor position against the laid tree.
-  (define (handle-click!)
+  ;; Deepest scroll container under the point (its laid node), or #f.
+  (define (scroll-under l px py)
+    (let rec ([l l])
+      (or (for/first ([k (in-list (reverse (laid-children l)))]
+                      #:when (in-rect? k px py))
+            (rec k))
+          (and (eq? (node-kind (laid-node l)) 'scroll)
+               (in-rect? l px py)
+               l))))
+
+  ;; Adjust the deepest scroll container under the cursor by dy lines.
+  (define (handle-wheel! ydy)
+    (when laid-root
+      (define target (scroll-under laid-root mx my))
+      (when target
+        (define path (laid-path target))
+        (define content-h
+          (if (null? (laid-children target))
+              0
+              (laid-h (car (laid-children target)))))
+        (define max-off (max 0 (- content-h (laid-h target))))
+        (define off (hash-ref scroll-offsets path 0))
+        (hash-set! scroll-offsets path
+                   (min max-off (max 0 (- off (* ydy 40))))))))
+
+  (define (handle-click! action)
     (define hit (and laid-root (hit-interactive laid-root mx my)))
-    (unless hit
-      (set! focus-path '())
-      (set! focus-value "")
-      (set! caret 0))
-    (when hit
+    (define pressed? (= action GLFW_PRESS))
+    ;; slider drag lifecycle
+    (set! drag-slider-path
+          (if pressed?
+              (and hit (eq? (node-kind (laid-node hit)) 'slider) (laid-path hit))
+              #f))
+    (when (and hit pressed?)
       (define n (laid-node hit))
       (match (node-kind n)
+        ['slider
+         (when (node-prop n 'enabled? #t)
+           (slider-apply! hit mx))]
         ['button
          (when (node-prop n 'enabled? #t)
            (define cb (node-prop n 'on-click))
@@ -159,12 +197,23 @@
            (set! caret (string-length focus-value)))]
         [_ (void)])))
 
-  (define (insert-at-caret! str)
-    (set! focus-value
-          (string-append (substring focus-value 0 caret)
-                         str
-                         (substring focus-value caret)))
-    (set! caret (+ caret (string-length str))))
+  (define (slider-apply! l cursor-x)
+    (define n (laid-node l))
+    (define cb (node-prop n 'on-change))
+    (when cb
+      (define x (laid-x l))
+      (define w (laid-w l))
+      (define frac (min 1.0 (max 0.0 (/ (- cursor-x (+ x 9)) (max 1 (- w 18))))))
+      (define lo (node-prop n 'min 0))
+      (define hi (node-prop n 'max 1))
+      (send! (cb (+ lo (* frac (- hi lo)))))))
+
+  ;; While a slider drag is active, recompute its value from the cursor.
+  (define (update-slider-drag!)
+    (when (and drag-slider-path laid-root)
+      (define l (path->laid laid-root drag-slider-path))
+      (when (and l (<= mx (+ (laid-x l) (laid-w l))) (>= mx (laid-x l)))
+        (slider-apply! l mx))))
 
   (define (backspace!)
     (when (> caret 0)
@@ -172,16 +221,21 @@
             (string-append (substring focus-value 0 (sub1 caret))
                            (substring focus-value caret)))
       (set! caret (sub1 caret))
-      (define l (and laid-root (path->laid laid-root focus-path)))
-      (when l
-        (define cb (node-prop (laid-node l) 'on-change))
-        (when cb (send! (cb focus-value))))))
+      (dispatch-input-change!)))
+
+  (define (dispatch-input-change!)
+    (define l
+      (and laid-root (not (null? focus-path)) (path->laid laid-root focus-path)))
+    (when (and l (eq? (node-kind (laid-node l)) 'input))
+      (define cb (node-prop (laid-node l) 'on-change))
+      (when cb (send! (cb focus-value)))))
 
   (define (handle-key! key action mods)
     (define ctrl? (not (zero? (bitwise-and mods GLFW_MOD_CONTROL))))
     (define super? (not (zero? (bitwise-and mods GLFW_MOD_SUPER))))
     (define alt? (not (zero? (bitwise-and mods GLFW_MOD_ALT))))
     (when (= action GLFW_PRESS)
+      ;; quit chord
       (when (and (= key (char->integer (char-upcase quit-key)))
                  (match quit-mods
                    ['super (or super? ctrl?)]
@@ -189,47 +243,83 @@
                    ['alt alt?]
                    [#f #f]))
         (set! quit? #t))
-      (when (and (not (null? focus-path)) laid-root)
-        (define l (path->laid laid-root focus-path))
-        (when (and l (eq? (node-kind (laid-node l)) 'input))
-          (match key
-            [(== GLFW_KEY_BACKSPACE)
-             (backspace!)]
-            [(== GLFW_KEY_DELETE)
-             (when (< caret (string-length focus-value))
-               (set! focus-value
-                     (string-append (substring focus-value 0 caret)
-                                    (substring focus-value (add1 caret))))
-               (set! caret (string-length focus-value))
-               (define cb (node-prop (laid-node l) 'on-change))
-               (when cb (send! (cb focus-value))))]
-            [(== GLFW_KEY_LEFT)
-             (set! caret (max 0 (sub1 caret)))]
-            [(== GLFW_KEY_RIGHT)
-             (set! caret (min (string-length focus-value) (add1 caret)))]
-            [(== GLFW_KEY_HOME)
-             (set! caret 0)]
-            [(== GLFW_KEY_END)
-             (set! caret (string-length focus-value))]
-            [(== GLFW_KEY_C)
-             #:when ctrl?
-             (pw-clipboard-set! pw focus-value)]
-            [(== GLFW_KEY_X)
-             #:when ctrl?
-             (pw-clipboard-set! pw focus-value)
-             (backspace!)]
-            [(== GLFW_KEY_V)
-             #:when ctrl?
-             (define clip (pw-clipboard-get pw))
-             (when (and clip (non-empty-string? clip))
-               (set! focus-value
-                     (string-append (substring focus-value 0 caret)
-                                    clip
-                                    (substring focus-value caret)))
-               (set! caret (+ caret (string-length clip)))
-               (define cb (node-prop (laid-node l) 'on-change))
-               (when cb (send! (cb focus-value))))]
-            [_ (void)])))))
+      (cond
+        ;; Tab focus cycling over interactive widgets
+        [(and (= key GLFW_KEY_TAB) (laid-root))
+         (define order
+           (let walk ([l laid-root] [acc '()])
+             (define acc2
+               (if (and (memq (node-kind (laid-node l)) '(input button checkbox slider))
+                        (node-prop (laid-node l) 'enabled? #t))
+                   (append acc (list (laid-path l)))
+                   acc))
+             (for/fold ([a acc2]) ([k (in-list (laid-children l))])
+               (walk k a))))
+         (define idx
+           (for/first ([p (in-list order)] [i (in-naturals)]
+                       #:when (equal? p focus-path))
+             i))
+         (set! focus-path
+               (if (null? order)
+                   '()
+                   (list-ref order (modulo (if idx (add1 idx) 0) (length order)))))]
+        ;; text editing on the focused input
+        [(and (not (null? focus-path)) (= key GLFW_KEY_BACKSPACE))
+         (when (> caret 0)
+           (set! focus-value
+                 (string-append (substring focus-value 0 (sub1 caret))
+                                (substring focus-value caret)))
+           (set! caret (sub1 caret))
+           (dispatch-input-change!))]
+        [(and (not (null? focus-path)) (= key GLFW_KEY_DELETE))
+         (when (< caret (string-length focus-value))
+           (set! focus-value
+                 (string-append (substring focus-value 0 caret)
+                                (substring focus-value (add1 caret))))
+           (set! caret (string-length focus-value))
+           (dispatch-input-change!))]
+        [(and (not (null? focus-path)) (= key GLFW_KEY_LEFT))
+         (set! caret (max 0 (sub1 caret)))]
+        [(and (not (null? focus-path)) (= key GLFW_KEY_RIGHT))
+         (set! caret (min (string-length focus-value) (add1 caret)))]
+        [(and (not (null? focus-path)) (= key GLFW_KEY_HOME))
+         (set! caret 0)]
+        [(and (not (null? focus-path)) (= key GLFW_KEY_END))
+         (set! caret (string-length focus-value))]
+        [(and (not (null? focus-path)) ctrl? (= key GLFW_KEY_C))
+         (pw-clipboard-set! pw focus-value)]
+        [(and (not (null? focus-path)) ctrl? (= key GLFW_KEY_X))
+         (pw-clipboard-set! pw focus-value)
+         (when (> caret 0)
+           (set! focus-value
+                 (string-append (substring focus-value 0 (sub1 caret))
+                                (substring focus-value caret)))
+           (set! caret (sub1 caret))
+           (dispatch-input-change!))]
+        [(and (not (null? focus-path)) ctrl? (= key GLFW_KEY_V))
+         (define clip (pw-clipboard-get pw))
+         (when (and clip (non-empty-string? clip))
+           (set! focus-value
+                 (string-append (substring focus-value 0 caret)
+                                clip
+                                (substring focus-value caret)))
+           (set! caret (+ caret (string-length clip)))
+           (dispatch-input-change!))]
+        [(and (not (null? focus-path)) (or (= key GLFW_KEY_ENTER) (= key GLFW_KEY_SPACE)))
+         (define l (path->laid laid-root focus-path))
+         (when (and l (memq (node-kind (laid-node l)) '(button checkbox)))
+           (define n (laid-node l))
+           (match (node-kind n)
+             ['button
+              (when (node-prop n 'enabled? #t)
+                (define cb (node-prop n 'on-click))
+                (when cb (send! (cb))))]
+             ['checkbox
+              (when (node-prop n 'enabled? #t)
+                (define cb (node-prop n 'on-change))
+                (when cb (send! (cb (not (node-prop n 'checked?))))))]
+             [_ (void)]))]
+        [else (void)])))
 
   (define (handle-char! cp)
     (when (and (not (null? focus-path)) laid-root (>= cp 32))
@@ -240,8 +330,10 @@
                              (string (integer->char cp))
                              (substring focus-value caret)))
         (set! caret (add1 caret))
-        (define cb (node-prop (laid-node l) 'on-change))
-        (when cb (send! (cb focus-value))))))
+        (dispatch-input-change!))))
+
+  (define (handle-char-insert! cp)
+    (void))
 
   ;; ---- frame ---------------------------------------------------------------------
 
@@ -250,6 +342,7 @@
     (define-values (fbw fbh) (pw-framebuffer-size pw))
     (define-values (ww wh) (pw-window-size pw))
     (define scale (/ fbw (max 1 ww)))
+    (define ctx (make-font-ctx scale))
 
     (renderer-begin-frame! renderer fbw fbh scale)
     (renderer-clear! renderer (theme-bg theme))
@@ -257,12 +350,17 @@
     (set! laid-root #f)
     (define root (view state))
     (when root
-      (define ctx (make-font-ctx scale))
       (set! laid-root (layout-view ctx root ww wh))
-      (parameterize ([current-hover-path
-                      (let ([hit (and laid-root (hit-interactive laid-root mx my))])
-                        (if hit (laid-path hit) '()))]
+      (define hit (and laid-root (hit-interactive laid-root mx my)))
+      (parameterize ([current-hover-path (if hit (laid-path hit) '())]
                      [current-focus-path focus-path])
+        ;; cursor feedback: text fields get an I-beam, buttons a hand
+        (if hit
+            (pw-cursor! pw
+                        (match (node-kind (laid-node hit))
+                          ['input 'ibeam]
+                          [_ 'hand]))
+            (pw-cursor! pw 'arrow))
         (draw-laid! renderer laid-root ctx)))
 
     (renderer-end-frame! renderer)
@@ -291,8 +389,9 @@
     (for ([e (in-list (reverse events))])
       (match e
         [(list 'click button action)
-         (when (= action GLFW_PRESS)
-           (handle-click!))]
+         (handle-click! action)]
+        [(list 'wheel xdy ydy)
+         (handle-wheel! ydy)]
         [(list 'key key action mods)
          (handle-key! key action mods)]
         [(list 'char cp)

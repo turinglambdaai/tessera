@@ -71,6 +71,10 @@ The model is Elm-style: `state` is yours, `#:update` folds messages into it, and
 | `checkbox` | `#:checked?` + `#:on-change` receives the new boolean |
 | `input` | single-line text field: `#:value` `#:on-change` `#:placeholder` `#:password?` |
 | `progress` | determinate bar, value in `[0,1]` |
+| `slider` | drag control: `#:min` `#:max` `#:on-change` fires continuously |
+| `scroll` | wheel-scrollable clipped viewport with a scrollbar thumb |
+| `image` | raster image (.qoi/.bmp/.tga) with `#:width`/`#:height` |
+| `spinner` | indeterminate activity indicator (animated) |
 | `divider` | horizontal rule |
 | `row` / `column` | flex containers: `#:spacing` `#:padding` `#:align` |
 | `box` | padded rounded surface: `#:bg` `#:radius` `#:border` |
@@ -122,6 +126,7 @@ your app ──> run (Elm loop) ──> view tree (plain data)
 - **CFF/PostScript outlines are rejected** — `.otf` fonts fail at load; system fallback resolution skips them
 - **No IME composition** — GLFW delivers committed text only; CJK input works through your OS clipboard/IME tooling, not in-window composition
 - **Single-line `input`** — no multi-line editor yet
+- **Kerning off** — pairwise kerning from the legacy `kern` table lands in 0.3
 
 ## Examples
 
