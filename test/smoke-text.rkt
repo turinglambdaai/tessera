@@ -6,6 +6,7 @@
 
 (require rackunit
          racket/file
+         racket/math
          tessera/platform
          tessera/ffi/gl
          tessera/render
