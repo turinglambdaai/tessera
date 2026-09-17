@@ -11,13 +11,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            racket-arch: x64
+          - os: macos-latest
+            racket-arch: arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: Bogdanp/setup-racket@v1.11
+      - uses: Bogdanp/setup-racket@v1.15
         with:
           version: 'stable'
+          architecture: ${{ matrix.racket-arch }}
       - name: Install GLFW (macOS)
         if: runner.os == 'macOS'
         run: brew install glfw
