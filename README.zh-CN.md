@@ -17,7 +17,7 @@ Racket 自带 `racket/gui`，能用——但很难做成现代产品级的界面
 - **声明式视图**——UI 就是一个纯函数返回的不可变树；状态留在你的应用里（Elm 式 `update`）
 - **真实文字**——TrueType 解析、扫线光栅化、字距、CJK 回退字体；中英混排直接可用
 - **Agent 友好**——无头快照渲染（`render-view->png`），纯 `racket` 代码即可做像素级验证
-- **零 C 工具链**——GLFW 与字体解析通过 Racket FFI 运行时加载；`raco pkg install` 一步到位
+- **零 C 工具链**——GLFW 与字体解析通过 Racket FFI 运行时加载；系统运行库准备好之后，`raco pkg install` 即可安装
 
 ## 环境要求
 
@@ -25,26 +25,54 @@ Racket 自带 `racket/gui`，能用——但很难做成现代产品级的界面
 |------|-------------|
 | [Racket](https://racket-lang.org/) | 9.x (CS) 或更高 |
 | [GLFW 3](https://www.glfw.org/) | 运行时加载，无需头文件 |
+| OpenGL 运行库 | Linux 使用 Mesa 或厂商驱动；macOS 使用系统 OpenGL framework |
+| TrueType 字体 | 内置文字渲染器使用 |
 
-平台说明：macOS 走 legacy-profile GL 管线（见"诚实的局限"）；Linux 通过 Mesa 或厂商驱动走同一管线。
+平台说明：macOS 走 legacy-profile GL 管线（见“诚实的局限”）；Linux 通过 Mesa 或厂商驱动走同一管线。
 
 ## 快速上手
 
-### 1. 安装
+### 1. 安装系统运行依赖
+
+Ubuntu / Debian：
+
+```bash
+sudo apt update
+sudo apt install -y libglfw3 libgl1-mesa-dri libglx-mesa0 fonts-dejavu-core
+# 需要中日韩字符回退字体时推荐安装：
+sudo apt install -y fonts-noto-cjk
+```
+
+macOS：
+
+```bash
+brew install glfw
+```
+
+### 2. 安装 Tessera
 
 ```bash
 git clone https://github.com/turinglambdaai/tessera.git
 cd tessera
-raco pkg install --name tessera --link .
+raco pkg install --auto --name tessera --link "$(pwd)"
 ```
 
-### 2. 跑一个示例
+这里故意使用绝对路径。Racket 9.3 在同时使用 `--name` 与 `--link .` 时会拒绝 `.`，报 `ending path element is not a name`。
+
+### 3. 跑一个示例
 
 ```bash
 racket examples/counter.rkt
 ```
 
-### 3. 写你的应用
+如果是在没有桌面环境的 Linux/CI 中做测试或快照渲染：
+
+```bash
+sudo apt install -y xvfb
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a racket examples/counter.rkt
+```
+
+### 4. 写你的应用
 
 ```racket
 #lang racket/base
@@ -143,6 +171,12 @@ Tessera 自己的测试套件就建立在这上面：本 README 的每张截图�
 raco test test/                 # 单元 + 冒烟 + 快照测试（需要显示器）
 raco make main.rkt              # 编译
 raco scribble --dest doc tessera.scrbl
+```
+
+Linux CI / 无头环境：
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x1024x24" raco test test/
 ```
 
 快照测试会把 PNG 写入 `test/snapshots/`——失败后先看图，一张图胜过一条像素断言。
