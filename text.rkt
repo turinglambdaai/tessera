@@ -49,6 +49,15 @@
      (list "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
            "/usr/share/fonts/TTF/DejaVuSans.ttf"
            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+           ;; WenQuanYi Zen Hei is a TrueType collection and therefore works
+           ;; with tessera's current pure-Racket glyf outline parser. Ubuntu
+           ;; and Debian provide this path via fonts-wqy-zenhei.
+           "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
+           "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc"
+           ;; Keep common Noto locations for future/locally-installed TTF
+           ;; variants. Many distro Noto CJK packages are OpenType/CFF and are
+           ;; intentionally rejected by the current parser.
+           "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc")]
     [(windows)
      (list "C:/Windows/Fonts/segoeui.ttf"
@@ -180,280 +189,226 @@
           (emit (xy j))
           (unless (= j first-on) (walk j))]
          [else
-          ;; collect the off-curve chain until the next on-curve point
-          (let chain ([offs (list (xy j))] [k (modulo (add1 j) n)])
-            (cond
-              [(on? k)
-               ;; chained quads: p -> o1 -> m(o1,o2) -> o2 -> ... -> (xy k)
-               (let quads ([prev (car result)] [offs2 offs])
-                 (cond
-                   [(null? offs2) (void)]
-                   [(null? (cdr offs2))
-                    (emit-quad-pts prev (car offs2) (xy k))]
-                   [else
-                    (define m (mid (car offs2) (cadr offs2)))
-                    (emit-quad-pts prev (car offs2) m)
-                    (quads m (cdr offs2))]))
-               (emit (xy k))
-               (unless (= k first-on) (walk k))]
-              [else
-               (chain (append offs (list (xy k))) (modulo (add1 k) n))]))]))])
+          (define k (modulo (add1 j) n))
+          (cond
+            [(on? k)
+             (emit-quad-pts (xy i) (xy j) (xy k))
+             (unless (= k first-on) (walk k))]
+            [else
+             ;; implied on-curve midpoint between two controls
+             (define m (mid (xy j) (xy k)))
+             (emit-quad-pts (xy i) (xy j) m)
+             ;; continue from implied point. The remaining original off-curve
+             ;; point k acts as the next control.
+             (let walk-off ([prev m] [ctrl-index k])
+               (define next-index (modulo (add1 ctrl-index) n))
+               (cond
+                 [(on? next-index)
+                  (emit-quad-pts prev (xy ctrl-index) (xy next-index))
+                  (unless (= next-index first-on) (walk next-index))]
+                 [else
+                  (define m2 (mid (xy ctrl-index) (xy next-index)))
+                  (emit-quad-pts prev (xy ctrl-index) m2)
+                  (walk-off m2 next-index)]))])]))])
+
   (reverse result))
 
-;; Flatten all contours to device-space edges (y flipped for screen space).
-(define (flatten-edges f glyph-id px-size)
-  (define scale (/ px-size 1.0 (font-units-per-em f)))
-  (define (px x) (* x scale))
-  (define (py y) (* (- y) scale))
-  (append*
-   (for/list ([c (in-list (glyph-outline f glyph-id))])
-     (define pts
-       (with-handlers ([symbol? (λ (sym) (if (eq? sym 'degenerate-contour) '() (raise sym #f)))])
-         (fix-contour c)))
-     (if (< (length pts) 2)
-         '()
-         (for/list ([i (in-range (length pts))])
-           (define p0 (list-ref pts i))
-           (define p1 (list-ref pts (modulo (add1 i) (length pts))))
-           (cons (cons (px (car p0)) (py (cdr p0)))
-                 (cons (px (car p1)) (py (cdr p1)))))))))
+;; Flatten all glyph contours, dropping degenerate ones.
+(define (flatten-outline contours)
+  (for/list ([c (in-list contours)]
+             #:do [(define fixed
+                     (with-handlers ([(λ (e) (eq? e 'degenerate-contour))
+                                      (λ (_) #f)])
+                       (fix-contour c)))]
+             #:when fixed)
+    fixed))
 
-;; ---- scanline rasterizer ------------------------------------------------------------------
+;; ---- scanline rasterizer -----------------------------------------------------------
 
-;; edges: list of ((x0 . y0) x1 . y1)? — no: list of ((x0.y0) . ((x1.y1)))
-;; from flatten-edges. Normalize to flat (x0 y0 x1 y1) lists here.
-(define (rasterize-glyph fs char)
-  (define f (font-set-font fs))
-  (define s (font-set-px-size fs))
-  (define gid ((font-cmap-lookup f) char))
-  (define advance (exact-round (font-units->px f (glyph-advance f gid) s)))
-  (if (zero? gid)
-      (values #"" 0 0 0 0 advance)
-      (let* ([flat (flatten-edges f gid s)]
-             [edges (for/list ([e (in-list flat)])
-                      (vector (car (car e)) (cdr (car e))
-                              (car (cdr e)) (cdr (cdr e))))]
-             [xmins (for/list ([e (in-list edges)]) (min (vector-ref e 0) (vector-ref e 2)))]
-             [xmaxs (for/list ([e (in-list edges)]) (max (vector-ref e 0) (vector-ref e 2)))]
-             [ymins (for/list ([e (in-list edges)]) (min (vector-ref e 1) (vector-ref e 3)))]
-             [ymaxs (for/list ([e (in-list edges)]) (max (vector-ref e 1) (vector-ref e 3)))])
-        (if (null? edges)
-            (values #"" 0 0 0 0 advance)
-            (let* ([xmin (exact-floor (- (foldl min +inf.0 xmins) 0.5))]
-                   [ymin (exact-floor (- (foldl min +inf.0 ymins) 0.5))]
-                   [xmax (exact-ceiling (+ (foldl max -inf.0 xmaxs) 0.5))]
-                   [ymax (exact-ceiling (+ (foldl max -inf.0 ymaxs) 0.5))]
-                   [w (max 1 (- xmax xmin))]
-                   [h (max 1 (- ymax ymin))]
-                   [cov (rasterize-edges edges xmin ymin w h)]
-                   [bearing-x xmin]
-                   [bearing-y ymin])
-              (values cov w h bearing-x bearing-y advance))))))
+(define samples-y 4)
 
-(define (rasterize-edges edges xmin ymin w h)
-  (define cov (make-bytes (* w h)))
-  (define row-cov (make-vector w 0.0))
-  (define subs 4)
-  (define inv-sub (/ 1.0 subs))
-  (for ([row (in-range h)])
-    (vector-fill! row-cov 0.0)
-    (for ([k (in-range subs)])
-      (define y (+ ymin row (* inv-sub (+ k 0.5))))
-      ;; collect crossings of this sub-row, as (x . winding-direction)
-      (define xs
-        (for/list ([e (in-list edges)]
-                   #:when (let ([ey0 (vector-ref e 1)] [ey1 (vector-ref e 3)])
-                            (and (not (= ey0 ey1))
-                                 (>= y (min ey0 ey1))
-                                 (< y (max ey0 ey1)))))
-          (define ex0 (vector-ref e 0))
-          (define ey0 (vector-ref e 1))
-          (define ex1 (vector-ref e 2))
-          (define ey1 (vector-ref e 3))
-          (define t (/ (- y ey0) (- ey1 ey0)))
-          (cons (+ ex0 (* t (- ex1 ex0)))
-                (if (> ey1 ey0) 1 -1))))
-      ;; nonzero winding walk
-      (define sorted (sort xs < #:key car))
-      (define count (length sorted))
-      (let walk ([i 0] [winding 0] [span-start 0.0])
-        (when (< i count)
-          (define xc (car (list-ref sorted i)))
-          (define dir (cdr (list-ref sorted i)))
-          (define nw (+ winding dir))
-          (cond
-            [(zero? winding)
-             (walk (add1 i) nw xc)]
-            [(zero? nw)
-             ;; close span [span-start, xc)
-             (define px-start (max 0 (exact-floor (- span-start xmin))))
-             (define px-end (min w (exact-ceiling (- xc xmin))))
-             (for ([px (in-range px-start px-end)])
-               (define lo (max span-start (+ xmin px)))
-               (define hi (min xc (+ xmin px 1.0)))
-               (when (< lo hi)
-                 (vector-set! row-cov px
-                              (+ (vector-ref row-cov px) (* (- hi lo) inv-sub)))))
-             (walk (add1 i) nw span-start)]
-            [else
-             (walk (add1 i) nw span-start)]))))
-    (for ([col (in-range w)])
-      (define v (vector-ref row-cov col))
-      (unless (zero? v)
-        (bytes-set! cov (+ (* row w) col)
-                    (min 255 (exact-round (* 255.0 v)))))))
-  cov)
+;; Intersections between a polyline and a horizontal scanline y.
+(define (scan-intersections poly y)
+  (define v (list->vector poly))
+  (define n (vector-length v))
+  (sort
+   (for/list ([i (in-range n)]
+              #:do [(define a (vector-ref v i))
+                    (define b (vector-ref v (modulo (add1 i) n)))]
+              #:when (or (and (<= (cdr a) y) (> (cdr b) y))
+                         (and (<= (cdr b) y) (> (cdr a) y))))
+     (+ (car a)
+        (* (/ (- y (cdr a)) (- (cdr b) (cdr a)))
+           (- (car b) (car a)))))
+   <))
 
-;; ---- atlas placement ------------------------------------------------------------------------
+;; Rasterize one glyph to an 8-bit alpha bitmap and metrics.
+;; Returns values: bytes w h bearing-x bearing-y advance.
+(define (rasterize-glyph f char px-size)
+  (define glyph-index ((font-cmap-lookup f) char))
+  (define advance (exact-round (font-units->px f (glyph-advance f glyph-index) px-size)))
+  (define contours (glyph-outline f glyph-index))
+  (cond
+    [(null? contours)
+     (values #"" 0 0 0 0 advance)]
+    [else
+     (define polys (flatten-outline contours))
+     (if (null? polys)
+         (values #"" 0 0 0 0 advance)
+         (let* ([s (/ px-size (font-units-per-em f))]
+                [all (apply append polys)]
+                [xs (map (λ (p) (* s (car p))) all)]
+                ;; flip font y-up into bitmap y-down
+                [ys (map (λ (p) (* -1.0 s (cdr p))) all)]
+                [min-x (floor (apply min xs))]
+                [max-x (ceiling (apply max xs))]
+                [min-y (floor (apply min ys))]
+                [max-y (ceiling (apply max ys))]
+                [w (max 0 (exact-round (- max-x min-x)))]
+                [h (max 0 (exact-round (- max-y min-y)))]
+                [scaled-polys
+                 (for/list ([poly (in-list polys)])
+                   (for/list ([p (in-list poly)])
+                     (cons (- (* s (car p)) min-x)
+                           (- (* -1.0 s (cdr p)) min-y))))]
+                [bitmap (make-bytes (* w h) 0)])
+           (for ([py (in-range h)])
+             (for ([sy (in-range samples-y)])
+               (define y (+ py (/ (+ sy 0.5) samples-y)))
+               ;; non-zero fill via even/odd spans per contour; overlapping
+               ;; contours are OR-combined into coverage.
+               (define row-coverage (make-vector w 0))
+               (for ([poly (in-list scaled-polys)])
+                 (define xs* (scan-intersections poly y))
+                 (let spans ([rest xs*])
+                   (when (>= (length rest) 2)
+                     (define x0 (first rest))
+                     (define x1 (second rest))
+                     (define lo (max 0 (inexact->exact (floor x0))))
+                     (define hi (min w (inexact->exact (ceiling x1))))
+                     (for ([px (in-range lo hi)])
+                       (define cov (max 0.0 (- (min (+ px 1.0) x1)
+                                              (max (exact->inexact px) x0))))
+                       (when (> cov 0)
+                         (vector-set! row-coverage px
+                                      (+ (vector-ref row-coverage px) cov))))
+                     (spans (cddr rest)))))
+               (for ([px (in-range w)])
+                 (define cov (min 1.0 (/ (vector-ref row-coverage px) samples-y)))
+                 (when (> cov 0)
+                   (bytes-set! bitmap (+ (* py w) px)
+                               (min 255 (+ (bytes-ref bitmap (+ (* py w) px))
+                                           (exact-round (* 255 cov)))))))))
+           (values bitmap w h (exact-round min-x) (exact-round min-y) advance)))]))
+
+;; ---- atlas packing -------------------------------------------------------------------
 
 (define (glyph-cell fs char)
-  (define glyphs (font-set-glyphs fs))
-  (or (hash-ref glyphs char #f)
-      (let-values ([(bytes w h bx by adv) (rasterize-glyph fs char)])
+  (hash-ref!
+   (font-set-glyphs fs) char
+   (λ ()
+     (define-values (bmp w h bx by adv)
+       (rasterize-glyph (font-set-font fs) char (font-set-px-size fs)))
+     (cond
+       [(or (= w 0) (= h 0))
+        (cell 0.0 0.0 0.0 0.0 0 0 bx by adv)]
+       [else
         (define a (font-set-atlas fs))
-        (define cell*
-          (if (or (zero? w) (zero? h))
-              (cell 0.0 0.0 0.0 0.0 0 0 0 0 adv)
-              (let* ([nx (atlas-cursor-x a)]
-                     [ny (atlas-cursor-y a)]
-                     [padded bytes])
-                (when (> (+ ny h) (sub1 atlas-size))
-                  (error 'tessera/text "glyph atlas exhausted (2048px); file an issue with your font"))
-                (glBindTexture GL_TEXTURE_2D (atlas-ensure-texture! a))
-                (glPixelStorei GL_UNPACK_ALIGNMENT 1)
-                (glTexSubImage2D GL_TEXTURE_2D 0 nx ny w h
-                                 GL_ALPHA GL_UNSIGNED_BYTE padded)
-                (let ([err (glGetError)])
-                  (unless (zero? err)
-                    (eprintf "TexSub FAILED for ~a: err ~a (w=~a h=~a)
-" char err w h)))
-                (set-atlas-cursor-x! a (+ nx w 2))
-                (set-atlas-cursor-y! a ny)
-                (set-atlas-row-h! a (max (atlas-row-h a) h))
-                (cell (/ nx atlas-size)
-                      (/ ny atlas-size)
-                      (/ (+ nx w) atlas-size)
-                      (/ (+ ny h) atlas-size)
-                      w h bx by adv))))
-        (hash-set! glyphs char cell*)
-        cell*)))
+        (define tex (atlas-ensure-texture! a))
+        (define packed-w (+ w (* 2 atlas-pad)))
+        (define packed-h (+ h (* 2 atlas-pad)))
+        (when (> (+ (atlas-cursor-x a) packed-w) atlas-size)
+          (set-atlas-cursor-x! a 1)
+          (set-atlas-cursor-y! a (+ (atlas-cursor-y a) (atlas-row-h a)))
+          (set-atlas-row-h! a 0))
+        (when (> (+ (atlas-cursor-y a) packed-h) atlas-size)
+          (error 'tessera/text "glyph atlas full"))
+        (define x (+ (atlas-cursor-x a) atlas-pad))
+        (define y (+ (atlas-cursor-y a) atlas-pad))
+        (glBindTexture GL_TEXTURE_2D tex)
+        (glPixelStorei GL_UNPACK_ALIGNMENT 1)
+        (glTexSubImage2D GL_TEXTURE_2D 0 x y w h GL_ALPHA GL_UNSIGNED_BYTE bmp)
+        (glBindTexture GL_TEXTURE_2D 0)
+        (set-atlas-cursor-x! a (+ (atlas-cursor-x a) packed-w))
+        (set-atlas-row-h! a (max (atlas-row-h a) packed-h))
+        (cell (/ x atlas-size) (/ y atlas-size)
+              (/ (+ x w) atlas-size) (/ (+ y h) atlas-size)
+              w h bx by adv)]))))
 
-;; ---- layout ------------------------------------------------------------------------------------
-
-;; Advance width of a string, device px at the font-set's size.
 (define (text-width fs str)
-  (define f (font-set-font fs))
-  (define s (font-set-px-size fs))
-  (let loop ([chars (string->list str)] [prev-gid #f] [x 0.0])
-    (cond
-      [(null? chars) (exact-round x)]
-      [else
-       (define gid ((font-cmap-lookup f) (car chars)))
-       (define kern (if prev-gid (font-units->px f (glyph-kern f prev-gid gid) s) 0))
-       (define adv (font-units->px f (glyph-advance f gid) s))
-       (loop (cdr chars) gid (+ x kern adv))])))
+  (for/fold ([x 0] [prev #f] #:result x)
+            ([ch (in-string str)])
+    (define kern (if prev (glyph-kern (font-set-font fs)
+                                      ((font-cmap-lookup (font-set-font fs)) prev)
+                                      ((font-cmap-lookup (font-set-font fs)) ch))
+                     0))
+    (values (+ x (font-units->px (font-set-font fs) kern (font-set-px-size fs))
+               (cell-advance (glyph-cell fs ch)))
+            ch)))
 
-;; Greedy wrapping; breaks allowed after spaces and between CJK glyphs.
+;; Caret index nearest a horizontal position in device pixels.
+(define (x->caret fs str x)
+  (let loop ([chars (string->list str)] [i 0] [pen 0.0])
+    (cond
+      [(null? chars) i]
+      [else
+       (define adv (cell-advance (glyph-cell fs (car chars))))
+       (if (< x (+ pen (/ adv 2.0))) i
+           (loop (cdr chars) (add1 i) (+ pen adv)))])))
+
 (define (wrap-text fs str max-width)
-  (define (breakable? c)
-    (or (char-whitespace? c)
-        (let ([code (char->integer c)])
-          (or (and (>= code #x2E80) (<= code #x9FFF))
-              (and (>= code #xF900) (<= code #xFAFF))
-              (and (>= code #xFF00) (<= code #xFFEF))
-              (>= code #x20000)))))
-  (define chars (string->list str))
-  (let wrap ([i 0] [line-start 0] [lines '()])
+  ;; Greedy word wrap. For CJK/non-space runs, falls back to char boundaries.
+  (define words (regexp-split #px"(?<=\\s)|(?=\\s)" str))
+  (define lines '())
+  (define current "")
+  (define (push!)
+    (unless (string=? current "")
+      (set! lines (cons (string-trim current) lines))
+      (set! current "")))
+  (for ([word (in-list words)])
+    (define candidate (string-append current word))
     (cond
-      [(>= i (length chars))
-       (reverse (cons (substring str line-start i) lines))]
+      [(<= (text-width fs candidate) max-width)
+       (set! current candidate)]
+      [(string=? current "")
+       ;; one token is too wide: split at characters
+       (for ([ch (in-string word)])
+         (define c (string ch))
+         (if (<= (text-width fs (string-append current c)) max-width)
+             (set! current (string-append current c))
+             (begin (push!) (set! current c))))]
       [else
-       (define candidate (substring str line-start (add1 i)))
-       (cond
-         [(<= (text-width fs candidate) (max 1 max-width))
-          (wrap (add1 i) line-start lines)]
-         [(= i line-start)
-          ;; single overlong unit: emit it anyway
-          (wrap (add1 i) (add1 i) (cons candidate lines))]
-         [else
-          ;; find the last break opportunity within [line-start, i)
-          (define break-at
-            (or (for/last ([k (in-range line-start i)]
-                           #:when (breakable? (list-ref chars k)))
-                  (add1 k))
-                i))
-          (wrap break-at break-at (cons (substring str line-start break-at) lines))])])))
+       (push!)
+       (set! current word)]))
+  (push!)
+  (reverse lines))
 
-;; ---- drawing -------------------------------------------------------------------------------------
-
-;; Draw a string with (x, y) at the top-left of the line box, in POINTS.
-;; Glyph metrics are device px (the font-set rasterizes at px-size device
-;; pixels), so the origin is converted once and the glyph stream runs in
-;; raw device coordinates. fs may be a (cons primary fallback) pair: chars
-;; missing from the primary face render from the fallback face.
-(define (draw-text! r fs-or-pair str x y color)
-  ;; fs-or-pair: primary font-set, or (cons primary cjk-fallback-or-#f).
-  ;; Missing glyphs render from the fallback face (same pixel size), so a
-  ;; Latin primary + CJK fallback covers mixed-script text.
-  (define primary (if (pair? fs-or-pair) (car fs-or-pair) fs-or-pair))
-  (define fallback (and (pair? fs-or-pair) (cdr fs-or-pair)))
-  (unless (string=? str "")
-    (r-use-texture! r (font-set-texture primary))
-    (define f (font-set-font primary))
-    (define s (font-set-px-size primary))
-    (define ascent (font-units->px f (font-ascent f) s))
-    (define x0 (* 1.0 x (renderer-scale r)))
-    (define y0 (* 1.0 y (renderer-scale r)))
-    (let draw ([chars (string->list str)] [prev-gid #f] [cx 0.0])
-      (unless (null? chars)
-        (define ch (car chars))
-        (define gid ((font-cmap-lookup f) ch))
-        (define kern (if prev-gid (font-units->px f (glyph-kern f prev-gid gid) s) 0))
-        (cond
-          [(and (zero? gid) fallback)
-           ;; render from the fallback face
-           (define fb-cell (glyph-cell fallback ch))
-           (when (> (cell-w fb-cell) 0)
-             (r-use-texture! r (font-set-texture fallback))
-             (r-quad-uv-raw! r
-                             (+ x0 cx kern (cell-bearing-x fb-cell))
-                             (+ y0 ascent (cell-bearing-y fb-cell))
-                             (cell-w fb-cell) (cell-h fb-cell)
-                             (cell-u0 fb-cell) (cell-v0 fb-cell)
-                             (cell-u1 fb-cell) (cell-v1 fb-cell)
-                             color))
-           (define fadv (font-units->px (font-set-font fallback)
-                                        (glyph-advance (font-set-font fallback)
-                                                       ((font-cmap-lookup (font-set-font fallback)) ch))
-                                        s))
-           (draw (cdr chars) gid (+ cx kern fadv))]
-          [else
-           (define cell* (glyph-cell primary ch))
-           (when (> (cell-w cell*) 0)
-             (r-use-texture! r (font-set-texture primary))
-             (r-quad-uv-raw! r
-                             (+ x0 cx kern (cell-bearing-x cell*))
-                             (+ y0 ascent (cell-bearing-y cell*))
-                             (cell-w cell*) (cell-h cell*)
-                             (cell-u0 cell*) (cell-v0 cell*)
-                             (cell-u1 cell*) (cell-v1 cell*)
-                             color))
-           (define adv (font-units->px f (glyph-advance f gid) s))
-           (draw (cdr chars) gid (+ cx kern adv))])))))
-
-;; Nearest caret index for a click at local offset `x-off` (device px):
-;; largest i such that the width of the first i chars fits before x-off.
-(define (x->caret fs str x-off)
-  (define f (font-set-font fs))
-  (define s (font-set-px-size fs))
-  (let loop ([chars (string->list str)] [prev-gid #f] [x 0.0] [best 0])
-    (cond
-      [(null? chars) best]
-      [else
-       (define gid ((font-cmap-lookup f) (car chars)))
-       (define kern (if prev-gid (font-units->px f (glyph-kern f prev-gid gid) s) 0))
-       (define adv (font-units->px f (glyph-advance f gid) s))
-       (define nx (+ x kern adv))
-       (if (<= (- nx x-off) (/ adv 2))
-           (loop (cdr chars) gid nx (add1 best))
-           best)])))
+;; Draw a string using one font-set. x/y are logical points; glyph bitmaps are
+;; device-pixel-sized, so position is scaled but cell metrics are already px.
+(define (draw-text! r fs str x y c)
+  (define s (renderer-scale r))
+  (define tex (font-set-texture fs))
+  (r-use-texture! r tex)
+  (define pen-x (* x s))
+  (define baseline (+ (* y s) (* (font-ascent (font-set-font fs))
+                                  (/ (font-set-px-size fs)
+                                     (font-units-per-em (font-set-font fs))))))
+  (define prev-gid #f)
+  (for ([ch (in-string str)])
+    (define gid ((font-cmap-lookup (font-set-font fs)) ch))
+    (when prev-gid
+      (set! pen-x (+ pen-x
+                     (font-units->px (font-set-font fs)
+                                     (glyph-kern (font-set-font fs) prev-gid gid)
+                                     (font-set-px-size fs)))))
+    (define g (glyph-cell fs ch))
+    (when (and (> (cell-w g) 0) (> (cell-h g) 0))
+      (r-quad-uv-raw! r
+                      (+ pen-x (cell-bearing-x g))
+                      (+ baseline (cell-bearing-y g))
+                      (cell-w g) (cell-h g)
+                      (cell-u0 g) (cell-v0 g) (cell-u1 g) (cell-v1 g) c))
+    (set! pen-x (+ pen-x (cell-advance g)))
+    (set! prev-gid gid))
+  (r-use-texture! r #f)
+  (/ pen-x s))
