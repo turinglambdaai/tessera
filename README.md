@@ -38,9 +38,13 @@ Ubuntu / Debian:
 
 ```bash
 sudo apt update
-sudo apt install -y libglfw3 libgl1-mesa-dri libglx-mesa0 fonts-dejavu-core
-# Optional but recommended for CJK fallback:
-sudo apt install -y fonts-noto-cjk
+sudo apt install -y libglfw3 libgl1-mesa-dri libglx-mesa0 fonts-dejavu-core fonts-wqy-zenhei
+```
+
+`fonts-wqy-zenhei` is used here because it provides a TrueType collection that Tessera's current pure-Racket `glyf` parser can consume. If you want CJK text on Ubuntu, point Tessera at it:
+
+```bash
+export TESSERA_FONT=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
 ```
 
 macOS:
@@ -76,7 +80,8 @@ LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a racket examples/counter.rkt
 
 ```racket
 #lang racket/base
-(require tessera)
+(require racket/match
+         tessera)
 
 (run #:title "计数器"
      #:width 360 #:height 220
@@ -119,7 +124,7 @@ Latin and CJK render from TrueType faces (`.ttf`/`.ttc`), resolved per platform 
 (wrap-text fs "long paragraph..." 400)  ; greedy wrap, CJK-aware breaks
 ```
 
-Per-character fallback: a Latin primary face plus a CJK-capable fallback face (STHeiti on macOS, Noto CJK on Linux) covers mixed-script strings.
+On Ubuntu, the tested CJK setup is WenQuanYi Zen Hei (`fonts-wqy-zenhei`) selected through `TESSERA_FONT`. The current parser intentionally rejects CFF/PostScript outlines, so not every `.otf`/`.ttc` package is usable yet.
 
 ## Verification built in
 
