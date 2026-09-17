@@ -6,6 +6,7 @@
 
 (require rackunit
          racket/file
+         racket/math
          ffi/unsafe
          tessera/platform
          tessera/ffi/gl
@@ -67,8 +68,6 @@
 
 ;; Convert logical point coordinates into device-pixel coordinates. Do not
 ;; assume Retina/2x: Linux/X11 commonly reports scale 1 while macOS may be 2.
-(define (device v)
-  (min (sub1 (max fbw fbh)) (max 0 (exact-round (* v scale)))))
 (define (pixel-index x y)
   (define dx (min (sub1 fbw) (max 0 (exact-round (* x scale)))))
   (define dy (min (sub1 fbh) (max 0 (exact-round (* y scale)))))
