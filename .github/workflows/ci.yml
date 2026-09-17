@@ -44,4 +44,5 @@ jobs:
         if: runner.os == 'Linux'
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
+          TESSERA_FONT: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
         run: xvfb-run -a -s "-screen 0 1280x1024x24" raco test test/
