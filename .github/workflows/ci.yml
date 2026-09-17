@@ -25,7 +25,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglfw3 xvfb libgl1-mesa-dri libglx-mesa0 libglu1-mesa fonts-dejavu-core
+          sudo apt-get install -y \
+            libglfw3 \
+            xvfb \
+            libgl1-mesa-dri \
+            libglx-mesa0 \
+            libglu1-mesa \
+            fonts-dejavu-core \
+            fonts-wqy-zenhei
       - name: Install package
         run: raco pkg install --auto --name tessera --link "$GITHUB_WORKSPACE"
       - name: Compile public entry point
