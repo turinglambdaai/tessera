@@ -17,7 +17,8 @@
                                   #:visible? #f))
 (pw-make-current! pw)
 (define-values (fbw fbh) (pw-framebuffer-size pw))
-(define scale (/ fbw 480))
+(define-values (ww wh) (pw-window-size pw))
+(define scale (/ fbw (max 1 ww)))
 
 (define r (make-renderer))
 (renderer-begin-frame! r fbw fbh scale)
@@ -64,14 +65,22 @@
 (make-directory* out)
 (png-write (build-path out "render-smoke.png") fbw fbh pixels)
 
+;; Convert logical point coordinates into device-pixel coordinates. Do not
+;; assume Retina/2x: Linux/X11 commonly reports scale 1 while macOS may be 2.
+(define (device v)
+  (min (sub1 (max fbw fbh)) (max 0 (exact-round (* v scale)))))
+(define (pixel-index x y)
+  (define dx (min (sub1 fbw) (max 0 (exact-round (* x scale)))))
+  (define dy (min (sub1 fbh) (max 0 (exact-round (* y scale)))))
+  (+ (* dy fbw 4) (* dx 4)))
+
 ;; background pixel (top-left) must be the cream clear color
 (check-true (> (bytes-ref pixels 0) 230) "background red channel")
-;; terracotta rect center (20..110 x 20..80 pt → ×2 device)
-(define sample-x (* 2 60)) (define sample-y (* 2 50))
-(define idx (+ (* sample-y fbw 4) (* sample-x 4)))
+;; terracotta rect center (20..110 x 20..80 logical points)
+(define idx (pixel-index 60 50))
 (check-true (> (bytes-ref pixels idx) 150) "terracotta rect present")
 ;; clipped rect must NOT appear below the scissor band
-(define below (+ (* (* 2 280) fbw 4) (* (* 2 60) 4)))
+(define below (pixel-index 60 280))
 (check-equal? (bytes-ref pixels below) 244 "outside clip stays background")
 
 (close-platform-window! pw)
