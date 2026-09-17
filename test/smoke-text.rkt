@@ -26,7 +26,8 @@
 (define fs (make-font-set font-path 32))
 (define cjk-fs (make-font-set cjk-path 32))
 (define-values (fbw fbh) (pw-framebuffer-size pw))
-(define scale (/ fbw 640))
+(define-values (ww wh) (pw-window-size pw))
+(define scale (/ fbw (max 1 ww)))
 
 (define r (make-renderer))
 (renderer-begin-frame! r fbw fbh scale)
@@ -53,16 +54,19 @@
 (make-directory* out)
 (png-write (build-path out "text-smoke.png") fbw fbh pixels)
 
-;; assertions: dark text pixels must exist in the heading band
+;; assertions: dark text pixels must exist in the requested logical band.
+;; Convert points to framebuffer pixels using the actual platform scale; X11
+;; commonly uses 1x while Retina displays use 2x.
 (define (has-ink? y0 y1)
-  ;; any pixel notably darker than the cream background (#F4F3EE)
   (define stride (* fbw 4))
-  (define found
-    (for*/or ([y (in-range (* 2 y0) (* 2 y1) 2)]
-              [x (in-range (* 2 24) (* 2 500) 2)])
-      (let ([i (+ (* y stride) (* x 4))])
-        (< (bytes-ref pixels i) 150))))
-  found)
+  (define px-y0 (max 0 (exact-round (* scale y0))))
+  (define px-y1 (min fbh (exact-round (* scale y1))))
+  (define px-x0 (max 0 (exact-round (* scale 24))))
+  (define px-x1 (min fbw (exact-round (* scale 500))))
+  (for*/or ([y (in-range px-y0 px-y1)]
+            [x (in-range px-x0 px-x1)])
+    (let ([i (+ (* y stride) (* x 4))])
+      (< (bytes-ref pixels i) 150))))
 (check-true (has-ink? 24 60) "heading glyphs rendered")
 (check-true (has-ink? 90 200) "body glyphs rendered")
 (check-true (has-ink? 200 240) "cjk glyphs rendered")
