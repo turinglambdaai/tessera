@@ -38,9 +38,13 @@ Ubuntu / Debian：
 
 ```bash
 sudo apt update
-sudo apt install -y libglfw3 libgl1-mesa-dri libglx-mesa0 fonts-dejavu-core
-# 需要中日韩字符回退字体时推荐安装：
-sudo apt install -y fonts-noto-cjk
+sudo apt install -y libglfw3 libgl1-mesa-dri libglx-mesa0 fonts-dejavu-core fonts-wqy-zenhei
+```
+
+这里使用 `fonts-wqy-zenhei`，因为它提供的 TrueType Collection 能被 Tessera 当前纯 Racket 的 `glyf` 解析器处理。在 Ubuntu 上需要显示中文时，建议设置：
+
+```bash
+export TESSERA_FONT=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
 ```
 
 macOS：
@@ -76,7 +80,8 @@ LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a racket examples/counter.rkt
 
 ```racket
 #lang racket/base
-(require tessera)
+(require racket/match
+         tessera)
 
 (run #:title "计数器"
      #:width 360 #:height 220
@@ -119,7 +124,7 @@ LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a racket examples/counter.rkt
 (wrap-text fs "很长的段落……" 400)         ; 贪心换行，支持 CJK 断行
 ```
 
-逐字符回退：拉丁主字体 + CJK 回退字体（macOS 为 STHeiti，Linux 为 Noto CJK）覆盖混排字符串。
+Ubuntu 上目前验证通过的 CJK 方案是 `fonts-wqy-zenhei`，并通过 `TESSERA_FONT` 指向其 TTC 文件。当前字体解析器会主动拒绝 CFF/PostScript 轮廓，因此并不是所有 `.otf`/`.ttc` 字体包都能使用。
 
 ## 内置验证
 
