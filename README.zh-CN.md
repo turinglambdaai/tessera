@@ -184,6 +184,8 @@ Linux CI / 无头环境：
 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x1024x24" raco test test/
 ```
 
+CI 会在 Ubuntu 上通过 Xvfb + 软件 Mesa 跑完整的窗口、OpenGL 与快照测试。GitHub 当前的 macOS 26 ARM64 托管 runner 虽然可以加载 GLFW/NSGL，但没有可用的 NSGL pixel format，因此该 job 只验证原生 ARM64 安装、编译、GLFW FFI 加载与无窗口测试。完整的 macOS 渲染验证应在带可用显示/OpenGL 上下文的实体 Mac 或自托管 runner 上进行。
+
 快照测试会把 PNG 写入 `test/snapshots/`——失败后先看图，一张图胜过一条像素断言。
 
 ## 许可证
