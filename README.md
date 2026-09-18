@@ -184,6 +184,8 @@ On Linux CI/headless systems:
 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x1024x24" raco test test/
 ```
 
+CI runs the complete window/OpenGL/snapshot suite on Ubuntu under Xvfb + software Mesa. GitHub's hosted macOS 26 ARM64 runner currently exposes GLFW/NSGL but no usable NSGL pixel format, so that job verifies native ARM64 installation, compilation, GLFW FFI loading, and non-window tests. Full macOS rendering should be validated on a physical or self-hosted Mac with a working display/OpenGL context.
+
 Snapshot tests write PNGs into `test/snapshots/` — inspect them after failures; a picture beats a pixel assertion.
 
 ## License
