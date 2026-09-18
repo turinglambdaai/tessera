@@ -12,7 +12,8 @@ on the user side.
 @section{The Elm loop}
 
 @racketblock[
-(require tessera)
+(require racket/match
+         tessera)
 
 (run #:title "计数器"
      #:width 360 #:height 220
@@ -57,7 +58,7 @@ can be built, inspected, and rendered without a window:
 
 TrueType faces are parsed in pure Racket and rasterized on demand into a
 glyph atlas; Latin and CJK render through a per-character fallback chain.
-See @secref{tessera} for the platform notes and honest gaps.
+See the platform notes below and the README for the current limitations.
 
 @section{Platform notes}
 

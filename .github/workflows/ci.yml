@@ -4,32 +4,57 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            racket-arch: x64
+          - os: macos-latest
+            racket-arch: arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: Bogdanp/setup-racket@v1.11
+      - uses: Bogdanp/setup-racket@v1.15
         with:
           version: 'stable'
+          architecture: ${{ matrix.racket-arch }}
       - name: Install GLFW (macOS)
         if: runner.os == 'macOS'
         run: brew install glfw
-      - name: Install GLFW + xvfb (Linux)
+      - name: Install GLFW + Mesa + xvfb (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglfw3 xvfb libgl1-mesa-dri libglu1-mesa
+          sudo apt-get install -y \
+            libglfw3 \
+            xvfb \
+            libgl1-mesa-dri \
+            libglx-mesa0 \
+            libglu1-mesa \
+            fonts-dejavu-core \
+            fonts-wqy-zenhei
       - name: Install package
-        run: raco pkg install --auto --name tessera --link .
-      - name: Run tests (macOS)
+        run: raco pkg install --auto --name tessera --link "$GITHUB_WORKSPACE"
+      - name: Compile public entry point
+        run: raco make main.rkt
+      - name: Verify GLFW FFI (macOS)
         if: runner.os == 'macOS'
-        run: raco test test/
+        run: racket -e '(require tessera/ffi/glfw) (displayln (glfwGetVersionString))'
+      - name: Run non-window tests (macOS hosted runner)
+        if: runner.os == 'macOS'
+        run: raco test test/image.rkt
       - name: Run tests (Linux, headless)
         if: runner.os == 'Linux'
-        run: xvfb-run -a raco test test/
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          TESSERA_FONT: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" raco test test/

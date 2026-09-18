@@ -17,7 +17,7 @@ Racket ships `racket/gui`, and it works — but it is hard to style into a moder
 - **Declarative views** — your UI is a plain immutable tree returned from a function; state stays in your app (Elm-style `update`)
 - **Real text** — TrueType parsing, scanline rasterization, kerning, CJK via a fallback face; mixed-script strings render correctly
 - **Agent-friendly** — headless snapshot rendering (`render-view->png`) gives pixel-precise verification from plain `racket` code
-- **No C toolchain** — GLFW and the font parser load at runtime through Racket's FFI; `raco pkg install` is all you need
+- **No C toolchain** — GLFW and the font parser load at runtime through Racket's FFI; `raco pkg install` is all you need after the platform runtime libraries are present
 
 ## Requirements
 
@@ -25,30 +25,63 @@ Racket ships `racket/gui`, and it works — but it is hard to style into a moder
 |------------|-------------------|
 | [Racket](https://racket-lang.org/) | 9.x (CS) or later |
 | [GLFW 3](https://www.glfw.org/) | runtime-loaded, no headers needed |
+| OpenGL runtime | Mesa on Linux or the system OpenGL framework/driver |
+| TrueType font | used by the built-in text renderer |
 
 Platform notes: macOS uses the legacy-profile GL pipeline (see honest gaps below); Linux uses the same pipeline through Mesa or vendor drivers.
 
 ## Quick Start
 
-### 1. Install
+### 1. Install platform runtime dependencies
+
+Ubuntu / Debian:
+
+```bash
+sudo apt update
+sudo apt install -y libglfw3 libgl1-mesa-dri libglx-mesa0 fonts-dejavu-core fonts-wqy-zenhei
+```
+
+`fonts-wqy-zenhei` is used here because it provides a TrueType collection that Tessera's current pure-Racket `glyf` parser can consume. If you want CJK text on Ubuntu, point Tessera at it:
+
+```bash
+export TESSERA_FONT=/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+```
+
+macOS:
+
+```bash
+brew install glfw
+```
+
+### 2. Install Tessera
 
 ```bash
 git clone https://github.com/turinglambdaai/tessera.git
 cd tessera
-raco pkg install --name tessera --link .
+raco pkg install --auto --name tessera --link "$(pwd)"
 ```
 
-### 2. Run an example
+Using an absolute path is intentional: Racket 9.3 rejects `--link .` when `--name` is supplied because `.` is not a valid package-source name.
+
+### 3. Run an example
 
 ```bash
 racket examples/counter.rkt
 ```
 
-### 3. Write your app
+On a headless Linux machine, run snapshot/tests under Xvfb:
+
+```bash
+sudo apt install -y xvfb
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a racket examples/counter.rkt
+```
+
+### 4. Write your app
 
 ```racket
 #lang racket/base
-(require tessera)
+(require racket/match
+         tessera)
 
 (run #:title "计数器"
      #:width 360 #:height 220
@@ -91,7 +124,7 @@ Latin and CJK render from TrueType faces (`.ttf`/`.ttc`), resolved per platform 
 (wrap-text fs "long paragraph..." 400)  ; greedy wrap, CJK-aware breaks
 ```
 
-Per-character fallback: a Latin primary face plus a CJK-capable fallback face (STHeiti on macOS, Noto CJK on Linux) covers mixed-script strings.
+On Ubuntu, the tested CJK setup is WenQuanYi Zen Hei (`fonts-wqy-zenhei`) selected through `TESSERA_FONT`. The current parser intentionally rejects CFF/PostScript outlines, so not every `.otf`/`.ttc` package is usable yet.
 
 ## Verification built in
 
@@ -144,6 +177,14 @@ raco test test/                 # unit + smoke + snapshot tests (needs a display
 raco make main.rkt              # compile
 raco scribble --dest doc tessera.scrbl
 ```
+
+On Linux CI/headless systems:
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x1024x24" raco test test/
+```
+
+CI runs the complete window/OpenGL/snapshot suite on Ubuntu under Xvfb + software Mesa. GitHub's hosted macOS 26 ARM64 runner currently exposes GLFW/NSGL but no usable NSGL pixel format, so that job verifies native ARM64 installation, compilation, GLFW FFI loading, and non-window tests. Full macOS rendering should be validated on a physical or self-hosted Mac with a working display/OpenGL context.
 
 Snapshot tests write PNGs into `test/snapshots/` — inspect them after failures; a picture beats a pixel assertion.
 

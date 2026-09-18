@@ -78,15 +78,30 @@
                                #:min-height [min-height #f]
                                #:maximize [maximize #f])
   (platform-init!)
-  (glfwDefaultWindowHints)
-  (glfwWindowHint GLFW_VISIBLE (if visible? GLFW_TRUE GLFW_FALSE))
-  (glfwWindowHint GLFW_RESIZABLE (if resizable? GLFW_TRUE GLFW_FALSE))
-  ;; Legacy-profile context on every platform (see module note). Leaving the
-  ;; version/profile hints at their defaults requests exactly that.
-  (glfwWindowHint GLFW_CLIENT_API GLFW_OPENGL_API)
-  ;; 4x MSAA: antialiases the tessellated rounded corners in fixed-function
-  (glfwWindowHint GLFW_SAMPLES 4)
-  (define win (glfwCreateWindow width height title #f #f))
+  (define (create-window samples)
+    (glfwDefaultWindowHints)
+    (glfwWindowHint GLFW_VISIBLE (if visible? GLFW_TRUE GLFW_FALSE))
+    (glfwWindowHint GLFW_RESIZABLE (if resizable? GLFW_TRUE GLFW_FALSE))
+    ;; Legacy-profile context on every platform (see module note). Leaving the
+    ;; version/profile hints at their defaults requests exactly that.
+    (glfwWindowHint GLFW_CLIENT_API GLFW_OPENGL_API)
+    ;; Let Cocoa consider offline renderers. This matters on virtualized or
+    ;; display-less macOS hosts and is also useful on multi-GPU machines where
+    ;; the active renderer may change while the app is running.
+    (when (eq? (system-type 'os) 'macosx)
+      (glfwWindowHint GLFW_COCOA_GRAPHICS_SWITCHING GLFW_TRUE))
+    (glfwWindowHint GLFW_SAMPLES samples)
+    (glfwCreateWindow width height title #f #f))
+  ;; Prefer 4x MSAA for rounded geometry, but do not make multisampling a hard
+  ;; platform requirement. Headless/virtualized environments may expose a
+  ;; valid OpenGL context without a multisample pixel format. Falling back to
+  ;; zero samples keeps the app usable; GL_MULTISAMPLE is harmless when the
+  ;; framebuffer has no multisample buffers.
+  (define win
+    (or (create-window 4)
+        (begin
+          (eprintf "tessera: 4x MSAA unavailable; retrying without multisampling\n")
+          (create-window 0))))
   (unless win
     (error 'tessera "failed to create a window (is a display available?)"))
   (when (and min-width min-height)
