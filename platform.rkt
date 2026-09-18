@@ -85,13 +85,18 @@
     ;; Legacy-profile context on every platform (see module note). Leaving the
     ;; version/profile hints at their defaults requests exactly that.
     (glfwWindowHint GLFW_CLIENT_API GLFW_OPENGL_API)
+    ;; Let Cocoa consider offline renderers. This matters on virtualized or
+    ;; display-less macOS hosts and is also useful on multi-GPU machines where
+    ;; the active renderer may change while the app is running.
+    (when (eq? (system-type 'os) 'macosx)
+      (glfwWindowHint GLFW_COCOA_GRAPHICS_SWITCHING GLFW_TRUE))
     (glfwWindowHint GLFW_SAMPLES samples)
     (glfwCreateWindow width height title #f #f))
   ;; Prefer 4x MSAA for rounded geometry, but do not make multisampling a hard
-  ;; platform requirement. Headless/virtualized macOS environments in
-  ;; particular may expose a valid OpenGL context without a multisample pixel
-  ;; format. Falling back to zero samples keeps the app usable; GL_MULTISAMPLE
-  ;; is harmless when the framebuffer has no multisample buffers.
+  ;; platform requirement. Headless/virtualized environments may expose a
+  ;; valid OpenGL context without a multisample pixel format. Falling back to
+  ;; zero samples keeps the app usable; GL_MULTISAMPLE is harmless when the
+  ;; framebuffer has no multisample buffers.
   (define win
     (or (create-window 4)
         (begin
