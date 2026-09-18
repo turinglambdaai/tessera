@@ -46,9 +46,12 @@ jobs:
         run: raco pkg install --auto --name tessera --link "$GITHUB_WORKSPACE"
       - name: Compile public entry point
         run: raco make main.rkt
-      - name: Run tests (macOS)
+      - name: Verify GLFW FFI (macOS)
         if: runner.os == 'macOS'
-        run: raco test test/
+        run: racket -e '(require tessera/ffi/glfw) (displayln (glfwGetVersionString))'
+      - name: Run non-window tests (macOS hosted runner)
+        if: runner.os == 'macOS'
+        run: raco test test/image.rkt
       - name: Run tests (Linux, headless)
         if: runner.os == 'Linux'
         env:
